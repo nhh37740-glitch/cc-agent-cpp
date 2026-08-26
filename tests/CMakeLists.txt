@@ -99,3 +99,10 @@ add_executable(tool_registry_test tool_registry_test.cpp)
 target_link_libraries(tool_registry_test PRIVATE edge_core)
 edge_copy_runtime_dlls(tool_registry_test)
 add_test(NAME tool_registry_test COMMAND tool_registry_test)
+
+# Phase 9：Agent Loop（MockModel，不需要真实模型）
+add_executable(agent_loop_test agent_loop_test.cpp)
+target_link_libraries(agent_loop_test PRIVATE edge_core)
+edge_copy_runtime_dlls(agent_loop_test)
+add_test(NAME agent_loop_test COMMAND agent_loop_test
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
