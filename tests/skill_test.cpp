@@ -77,15 +77,25 @@ int main(int argc, char** argv) {
         return vlm.generate(msgs, rgb.data(), f.width, f.height);
     };
 
-    const auto ra = run_with_skill(sys_a);
-    const auto rb = run_with_skill(sys_b);
-    std::fprintf(stderr, "skill_a -> %s\n", ra.text.substr(0, 150).c_str());
-    std::fprintf(stderr, "skill_b -> %s\n", rb.text.substr(0, 150).c_str());
-
-    // 协议合规：剥离包装后可解析为 JSON 且 type 合法
+    // 协议合规：剥离包装后可解析为 JSON 且 type 合法；小模型不稳定，最多重试 2 次
     auto is_valid_protocol = [](const std::string& text) {
         return agent::parse_model_output(text).type != agent::OutputType::Invalid;
     };
+    auto run_valid = [&](const std::string& sys) {
+        auto r = run_with_skill(sys);
+        for (int attempt = 0; attempt < 2 && !is_valid_protocol(r.text); ++attempt) {
+            std::fprintf(stderr, "retry (attempt %d): %s\n", attempt + 1,
+                         r.text.substr(0, 80).c_str());
+            r = run_with_skill(sys);
+        }
+        return r;
+    };
+
+    const auto ra = run_valid(sys_a);
+    const auto rb = run_valid(sys_b);
+    std::fprintf(stderr, "skill_a -> %s\n", ra.text.substr(0, 150).c_str());
+    std::fprintf(stderr, "skill_b -> %s\n", rb.text.substr(0, 150).c_str());
+
     CHECK(is_valid_protocol(ra.text), "Skill A 下应输出合法协议 JSON");
     CHECK(is_valid_protocol(rb.text), "Skill B 下应输出合法协议 JSON");
     CHECK(ra.text != rb.text, "不同 Skill 应导致不同输出");

@@ -59,11 +59,17 @@ std::string build_system_prompt(const Skill& skill,
 
     ss << "# Output protocol (mandatory)\n";
     ss << "Analyze the given image. Respond with EXACTLY ONE JSON object and nothing "
-          "else. No markdown, no extra words.\n";
-    ss << "To call a tool:\n"
-       << "{\"type\":\"tool_call\",\"name\":\"TOOL_NAME\",\"arguments\":{...}}\n";
-    ss << "If no action is required:\n"
-       << "{\"type\":\"final\",\"content\":\"short reason\"}\n";
+          "else. No markdown, no code fences, no extra words.\n";
+    ss << "The JSON object must have this exact schema:\n";
+    ss << "- To call a tool: {\"type\":\"tool_call\",\"name\":\"TOOL_NAME\","
+          "\"arguments\":{...}}\n";
+    ss << "- If no action is required: {\"type\":\"final\",\"content\":\"short reason\"}\n";
+    ss << "Every response must contain the key \"type\" whose value is either "
+          "\"tool_call\" or \"final\".\n\n";
+    ss << "Example correct responses:\n"
+       << "{\"type\":\"tool_call\",\"name\":\"notify\","
+          "\"arguments\":{\"text\":\"A package appeared near the door\"}}\n"
+       << "{\"type\":\"final\",\"content\":\"Nothing notable in this frame.\"}\n";
     return ss.str();
 }
 

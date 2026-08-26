@@ -93,3 +93,9 @@ add_executable(structured_output_test structured_output_test.cpp)
 target_link_libraries(structured_output_test PRIVATE edge_core)
 edge_copy_runtime_dlls(structured_output_test)
 add_test(NAME structured_output_test COMMAND structured_output_test)
+
+# Phase 8：ToolRegistry 白名单与内置工具
+add_executable(tool_registry_test tool_registry_test.cpp)
+target_link_libraries(tool_registry_test PRIVATE edge_core)
+edge_copy_runtime_dlls(tool_registry_test)
+add_test(NAME tool_registry_test COMMAND tool_registry_test)
