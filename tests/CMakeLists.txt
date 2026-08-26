@@ -18,16 +18,25 @@ set(FIXTURE_DIR "${CMAKE_BINARY_DIR}/test-videos")
 file(MAKE_DIRECTORY "${FIXTURE_DIR}")
 set(FIXTURE_6S "${FIXTURE_DIR}/testsrc_6s.mp4")   # 动态画面：用于通用解码与筛帧
 set(FIXTURE_10S "${FIXTURE_DIR}/testsrc_10s.mp4") # 动态画面：用于 pacing 时长验收
+set(FIXTURE_STATIC "${FIXTURE_DIR}/black_6s.mp4") # 静止画面：用于筛帧负例
 
+# 动态 fixture：前 3 秒纯红、后 3 秒彩条，构成明确的场景切换
 add_test(NAME make_fixture_6s
     COMMAND "${FFMPEG_EXE}" -y -loglevel error
-        -f lavfi -i testsrc=size=320x240:rate=30:duration=6
+        -f lavfi -i "color=c=red:size=320x240:rate=30:duration=3"
+        -f lavfi -i "smptebars=size=320x240:rate=30:duration=3"
+        -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0[out]" -map "[out]"
         -pix_fmt yuv420p "${FIXTURE_6S}")
 add_test(NAME make_fixture_10s
     COMMAND "${FFMPEG_EXE}" -y -loglevel error
         -f lavfi -i testsrc=size=320x240:rate=30:duration=10
         -pix_fmt yuv420p "${FIXTURE_10S}")
-set_tests_properties(make_fixture_6s make_fixture_10s PROPERTIES FIXTURES_SETUP VideoFixtures)
+add_test(NAME make_fixture_static
+    COMMAND "${FFMPEG_EXE}" -y -loglevel error
+        -f lavfi -i color=c=black:size=320x240:rate=30:duration=6
+        -pix_fmt yuv420p "${FIXTURE_STATIC}")
+set_tests_properties(make_fixture_6s make_fixture_10s make_fixture_static
+    PROPERTIES FIXTURES_SETUP VideoFixtures)
 
 # Phase 2：VideoSource 单向解码 + EOF flush
 add_executable(video_source_test video_source_test.cpp)
@@ -42,3 +51,11 @@ target_link_libraries(pacing_test PRIVATE edge_core)
 edge_copy_runtime_dlls(pacing_test)
 add_test(NAME pacing_test COMMAND pacing_test "${FIXTURE_10S}")
 set_tests_properties(pacing_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 120)
+
+# Phase 4：FrameFilter 时间采样 + Y 平面帧差
+add_executable(frame_filter_test frame_filter_test.cpp)
+target_link_libraries(frame_filter_test PRIVATE edge_core)
+edge_copy_runtime_dlls(frame_filter_test)
+add_test(NAME frame_filter_test COMMAND frame_filter_test
+    "${FIXTURE_6S}" "${FIXTURE_STATIC}")
+set_tests_properties(frame_filter_test PROPERTIES FIXTURES_REQUIRED VideoFixtures)

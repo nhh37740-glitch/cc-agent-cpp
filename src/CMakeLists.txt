@@ -1,6 +1,7 @@
 # 核心库：视频源、筛帧、队列、模型、Agent 等（随 Phase 逐步扩充）
 add_library(edge_core STATIC
-    video/ffmpeg_video_source.cpp)
+    video/ffmpeg_video_source.cpp
+    filter/frame_filter.cpp)
 target_include_directories(edge_core PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(edge_core PUBLIC
     ffmpeg::headers ffmpeg::avformat ffmpeg::avcodec ffmpeg::swscale ffmpeg::avutil nlohmann_json)
