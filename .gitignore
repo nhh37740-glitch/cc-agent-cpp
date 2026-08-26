@@ -1,0 +1,25 @@
+# 构建产物
+build/
+build-*/
+out/
+*.obj
+*.pdb
+
+# 大体积测试视频（根目录 MP4 及任何生成的视频 fixture 均不入库）
+*.mp4
+*.avi
+
+# 模型权重
+models/
+*.gguf
+*.mmproj
+
+# FFmpeg 预编译二进制（见《依赖接入决策.md》：third_party/ffmpeg 不入库）
+third_party/ffmpeg/
+
+# 运行日志
+logs/
+
+# 临时文件
+*.tmp
+~$*
