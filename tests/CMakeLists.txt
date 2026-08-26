@@ -106,3 +106,17 @@ target_link_libraries(agent_loop_test PRIVATE edge_core)
 edge_copy_runtime_dlls(agent_loop_test)
 add_test(NAME agent_loop_test COMMAND agent_loop_test
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+# Phase 10：长时间运行内存稳定性（30s fixture，视频管线无模型）
+set(FIXTURE_30S "${FIXTURE_DIR}/testsrc_30s.mp4")
+add_test(NAME make_fixture_30s
+    COMMAND "${FFMPEG_EXE}" -y -loglevel error
+        -f lavfi -i "testsrc=size=320x240:rate=30:duration=30"
+        -pix_fmt yuv420p "${FIXTURE_30S}")
+set_tests_properties(make_fixture_30s PROPERTIES FIXTURES_SETUP VideoFixtures)
+
+add_executable(memory_test memory_test.cpp)
+target_link_libraries(memory_test PRIVATE edge_core)
+edge_copy_runtime_dlls(memory_test)
+add_test(NAME memory_test COMMAND memory_test "${FIXTURE_30S}")
+set_tests_properties(memory_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 300)

@@ -7,7 +7,8 @@ add_library(edge_core STATIC
     skill/skill_loader.cpp
     agent/structured_output.cpp
     agent/builtin_tools.cpp
-    agent/agent.cpp)
+    agent/agent.cpp
+    app/pipeline.cpp)
 target_include_directories(edge_core PUBLIC
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include"
