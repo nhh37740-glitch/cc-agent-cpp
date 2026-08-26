@@ -35,3 +35,10 @@ target_link_libraries(video_source_test PRIVATE edge_core)
 edge_copy_runtime_dlls(video_source_test)
 add_test(NAME video_source_test COMMAND video_source_test "${FIXTURE_6S}")
 set_tests_properties(video_source_test PROPERTIES FIXTURES_REQUIRED VideoFixtures)
+
+# Phase 3：realtime pacing
+add_executable(pacing_test pacing_test.cpp)
+target_link_libraries(pacing_test PRIVATE edge_core)
+edge_copy_runtime_dlls(pacing_test)
+add_test(NAME pacing_test COMMAND pacing_test "${FIXTURE_10S}")
+set_tests_properties(pacing_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 120)
