@@ -59,3 +59,9 @@ edge_copy_runtime_dlls(frame_filter_test)
 add_test(NAME frame_filter_test COMMAND frame_filter_test
     "${FIXTURE_6S}" "${FIXTURE_STATIC}")
 set_tests_properties(frame_filter_test PROPERTIES FIXTURES_REQUIRED VideoFixtures)
+
+# Phase 5：BoundedQueue
+add_executable(bounded_queue_test bounded_queue_test.cpp)
+target_link_libraries(bounded_queue_test PRIVATE edge_core)
+edge_copy_runtime_dlls(bounded_queue_test)
+add_test(NAME bounded_queue_test COMMAND bounded_queue_test)
