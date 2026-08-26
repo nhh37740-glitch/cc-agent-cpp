@@ -75,3 +75,21 @@ add_test(NAME vlm_smoke_test COMMAND vlm_smoke_test
     "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
     "${FIXTURE_6S}")
 set_tests_properties(vlm_smoke_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+
+# Phase 7：Skill 加载与行为切换
+add_executable(skill_test skill_test.cpp)
+target_link_libraries(skill_test PRIVATE edge_core)
+edge_copy_runtime_dlls(skill_test)
+add_test(NAME skill_test COMMAND skill_test
+    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
+    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
+    "${FIXTURE_6S}"
+    "${CMAKE_SOURCE_DIR}/skills/door-camera.md"
+    "${CMAKE_SOURCE_DIR}/skills/pet-watch.md")
+set_tests_properties(skill_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+
+# Phase 8：结构化输出解析（纯单元测试，不需要模型）
+add_executable(structured_output_test structured_output_test.cpp)
+target_link_libraries(structured_output_test PRIVATE edge_core)
+edge_copy_runtime_dlls(structured_output_test)
+add_test(NAME structured_output_test COMMAND structured_output_test)

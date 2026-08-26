@@ -3,7 +3,9 @@ add_library(edge_core STATIC
     video/ffmpeg_video_source.cpp
     video/yuv_to_rgb.cpp
     filter/frame_filter.cpp
-    model/llama_vlm.cpp)
+    model/llama_vlm.cpp
+    skill/skill_loader.cpp
+    agent/structured_output.cpp)
 target_include_directories(edge_core PUBLIC
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include"
