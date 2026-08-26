@@ -10,8 +10,10 @@
 
 namespace video {
 
-// 把 frame 的画面转换为连续 RGB24（每像素 3 字节，行对齐 = width*3）。
-// 成功返回 true；不支持的像素格式或参数非法返回 false。
-bool convert_to_rgb(const Frame& frame, std::vector<uint8_t>& out_rgb);
+// 把 frame 的画面转换为连续 RGB24（每像素 3 字节）。
+// target_width>0 时按比例缩放到该宽度（用于候选帧送入 VLM 前的降采样，
+// 控制视觉 token 数与队列内存）。out_w/out_h 非空时返回实际输出尺寸。
+bool convert_to_rgb(const Frame& frame, std::vector<uint8_t>& out_rgb,
+                    int target_width = 0, int* out_w = nullptr, int* out_h = nullptr);
 
 }  // namespace video

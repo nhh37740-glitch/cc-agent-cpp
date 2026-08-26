@@ -27,6 +27,7 @@ struct PipelineConfig {
 
     filter::FrameFilterConfig filter;   // sample_interval_ms / threshold 等
     std::size_t queue_capacity = 6;     // 4~8
+    int analysis_width = 448;           // 候选帧送入 VLM 前的降采样宽度
 };
 
 struct PipelineStats {

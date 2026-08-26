@@ -31,6 +31,7 @@ struct Args {
     int64_t sample_interval_ms = 2000;
     float threshold = 0.15f;
     std::size_t queue_capacity = 6;
+    int analysis_width = 448;
 };
 
 bool parse_args(int argc, char** argv, Args& a) {
@@ -50,6 +51,7 @@ bool parse_args(int argc, char** argv, Args& a) {
         else if (arg == "--threshold" && next()) a.threshold = (float)atof(argv[i]);
         else if (arg == "--queue-capacity" && next())
             a.queue_capacity = (std::size_t)atoll(argv[i]);
+        else if (arg == "--analysis-width" && next()) a.analysis_width = atoi(argv[i]);
         else return false;
     }
     return !a.video.empty();
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
     cfg.filter.sample_interval_ms = args.sample_interval_ms;
     cfg.filter.change_threshold = args.threshold;
     cfg.queue_capacity = args.queue_capacity;
+    cfg.analysis_width = args.analysis_width;
 
     // ---- Skill 与工具（C++ 白名单强制） ----
     skill::Skill sk;

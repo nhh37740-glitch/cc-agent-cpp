@@ -41,8 +41,9 @@ void video_worker(std::stop_token st, const PipelineConfig& cfg,
         stats.frames_evaluated.fetch_add(1);
         if (!r.should_analyze) continue;                   // 变化不足
 
-        // 候选确定后才做 RGB 转换
-        if (!video::convert_to_rgb(f, rgb)) {
+        // 候选确定后才做 RGB 转换，并降采样到分析宽度（控制视觉 token 数）
+        int cw = 0, ch = 0;
+        if (!video::convert_to_rgb(f, rgb, cfg.analysis_width, &cw, &ch)) {
             logger.event("error", {{"where", "convert_to_rgb"},
                                    {"pts", (double)f.pts}});
             continue;
@@ -52,8 +53,8 @@ void video_worker(std::stop_token st, const PipelineConfig& cfg,
         cand.pts = f.pts;
         cand.timestamp = f.timestamp;
         cand.change_score = r.score;
-        cand.width = f.width;
-        cand.height = f.height;
+        cand.width = cw;
+        cand.height = ch;
         cand.rgb = rgb;
 
         if (out_queue.push(std::move(cand))) {
