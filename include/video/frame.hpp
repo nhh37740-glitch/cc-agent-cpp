@@ -12,6 +12,7 @@ struct Frame {
     double timestamp = 0.0;  // 秒
     int width = 0;
     int height = 0;
+    int pix_fmt = -1;  // FFmpeg 的 AVPixelFormat 枚举值
 
     // YUV 平面指针与行距（指向内部缓冲，勿释放）
     const uint8_t* y_plane = nullptr;

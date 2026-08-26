@@ -65,3 +65,13 @@ add_executable(bounded_queue_test bounded_queue_test.cpp)
 target_link_libraries(bounded_queue_test PRIVATE edge_core)
 edge_copy_runtime_dlls(bounded_queue_test)
 add_test(NAME bounded_queue_test COMMAND bounded_queue_test)
+
+# Phase 6：mtmd 单图推理（需要本地模型权重；缺失时测试失败）
+add_executable(vlm_smoke_test vlm_smoke_test.cpp)
+target_link_libraries(vlm_smoke_test PRIVATE edge_core)
+edge_copy_runtime_dlls(vlm_smoke_test)
+add_test(NAME vlm_smoke_test COMMAND vlm_smoke_test
+    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
+    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
+    "${FIXTURE_6S}")
+set_tests_properties(vlm_smoke_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)

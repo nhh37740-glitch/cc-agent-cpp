@@ -139,6 +139,7 @@ bool FFmpegFileSource::read(Frame& out) {
         out.timestamp = ts;
         out.width = frame_->width;
         out.height = frame_->height;
+        out.pix_fmt = frame_->format;
         out.y_plane = frame_->data[0];
         out.y_stride = frame_->linesize[0];
         out.u_plane = frame_->data[1];
