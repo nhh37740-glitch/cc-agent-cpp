@@ -49,7 +49,16 @@ set_tests_properties(video_source_test PROPERTIES FIXTURES_REQUIRED VideoFixture
 add_executable(pacing_test pacing_test.cpp)
 target_link_libraries(pacing_test PRIVATE edge_core)
 edge_copy_runtime_dlls(pacing_test)
-add_test(NAME pacing_test COMMAND pacing_test "${FIXTURE_10S}")
+# 非零首 PTS fixture（R-025；负 PTS 用合成源在测试内验证，MP4 无法存储）
+set(FIXTURE_OFFSET "${FIXTURE_DIR}/offset_plus5.mp4")
+add_test(NAME make_fixture_offset
+    COMMAND "${FFMPEG_EXE}" -y -loglevel error
+        -f lavfi -i "testsrc=size=160x90:rate=10:duration=1"
+        -output_ts_offset 5 -pix_fmt yuv420p "${FIXTURE_OFFSET}")
+set_tests_properties(make_fixture_offset PROPERTIES FIXTURES_SETUP VideoFixtures)
+
+add_test(NAME pacing_test COMMAND pacing_test
+    "${FIXTURE_10S}" "${FIXTURE_OFFSET}")
 set_tests_properties(pacing_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 120)
 
 # Phase 4：FrameFilter 时间采样 + Y 平面帧差
@@ -81,12 +90,9 @@ add_executable(skill_test skill_test.cpp)
 target_link_libraries(skill_test PRIVATE edge_core)
 edge_copy_runtime_dlls(skill_test)
 add_test(NAME skill_test COMMAND skill_test
-    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
-    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
-    "${FIXTURE_6S}"
-    "${CMAKE_SOURCE_DIR}/skills/door-camera.md"
-    "${CMAKE_SOURCE_DIR}/skills/pet-watch.md")
-set_tests_properties(skill_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+    "${CMAKE_SOURCE_DIR}/tests/data/skill-door-short.md"
+    "${CMAKE_SOURCE_DIR}/tests/data/skill-pet-short.md")
+set_tests_properties(skill_test PROPERTIES TIMEOUT 900)
 
 # Phase 8：结构化输出解析（纯单元测试，不需要模型）
 add_executable(structured_output_test structured_output_test.cpp)
@@ -120,3 +126,56 @@ target_link_libraries(memory_test PRIVATE edge_core)
 edge_copy_runtime_dlls(memory_test)
 add_test(NAME memory_test COMMAND memory_test "${FIXTURE_30S}")
 set_tests_properties(memory_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 300)
+
+# R-029：日志并发写串行化
+add_executable(log_serialization_test log_serialization_test.cpp)
+target_link_libraries(log_serialization_test PRIVATE edge_core)
+edge_copy_runtime_dlls(log_serialization_test)
+add_test(NAME log_serialization_test COMMAND log_serialization_test)
+
+# R-030：sampler 重置确定性（真实模型）
+add_executable(determinism_test determinism_test.cpp)
+target_link_libraries(determinism_test PRIVATE edge_core)
+edge_copy_runtime_dlls(determinism_test)
+add_test(NAME determinism_test COMMAND determinism_test
+    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
+    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
+    "${FIXTURE_6S}")
+set_tests_properties(determinism_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+
+# R-021/R-023/R-031：CLI 行为（退出码与诊断）
+add_executable(cli_args_test cli_args_test.cpp)
+target_link_libraries(cli_args_test PRIVATE edge_core)
+edge_copy_runtime_dlls(cli_args_test)
+add_test(NAME cli_args_test COMMAND cli_args_test $<TARGET_FILE:edge_agent>)
+set_tests_properties(cli_args_test PROPERTIES TIMEOUT 300)
+
+# R-028：五类依赖缺失场景的隔离配置测试
+add_test(NAME dependency_error_tests
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_SOURCE_DIR}/tests/dependency_error_tests.ps1"
+        -Cmake "${CMAKE_COMMAND}"
+        -Source "${CMAKE_SOURCE_DIR}"
+        -WorkRoot "$ENV{TEMP}/edge_dep_test_$PID")
+set_tests_properties(dependency_error_tests PROPERTIES TIMEOUT 900)
+
+# 远程 Web 面板状态、帧编码与有界历史
+add_executable(dashboard_test dashboard_test.cpp)
+target_link_libraries(dashboard_test PRIVATE edge_core)
+edge_copy_runtime_dlls(dashboard_test)
+add_test(NAME dashboard_test COMMAND dashboard_test)
+
+# 视觉事实规范化：允许明确实体词，拒绝字段错配，避免丢弃可执行事实。
+add_executable(visual_checklist_test visual_checklist_test.cpp)
+target_link_libraries(visual_checklist_test PRIVATE edge_core)
+edge_copy_runtime_dlls(visual_checklist_test)
+add_test(NAME visual_checklist_test COMMAND visual_checklist_test)
+
+# 双模型新增：Qwen 文本模型必须独立完成工具决策，不接收图像。
+add_executable(decision_model_test decision_model_test.cpp)
+target_link_libraries(decision_model_test PRIVATE edge_core)
+edge_copy_runtime_dlls(decision_model_test)
+add_test(NAME decision_model_test COMMAND decision_model_test
+    "${CMAKE_SOURCE_DIR}/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    "${CMAKE_SOURCE_DIR}/skills/door-camera.md")
+set_tests_properties(decision_model_test PROPERTIES TIMEOUT 900)

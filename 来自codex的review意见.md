@@ -1025,3 +1025,278 @@ rg -n 'release-full-shared.*LGPL|官方预编译' plan.md AGENTS.md '依赖接�
 - Phase 1 文档与依赖门禁已解除。
 
 **放行边界：可以开始 Phase 1，但必须由用户明确要求实际开工；本次修复不等于自动创建代码。后续优先保证项目可编译、可运行、可演示和有基础测试，不再因纯 review 格式问题暂停 MVP。**
+
+---
+
+# 第九轮：MVP 实现独立评审（R-021～R-031）
+
+评审时间：2026-08-26
+评审范围：实际源码、CMake、测试、git 跟踪状态、增量构建、15 项 CTest、主程序 CLI 与真实 InternVL3/mtmd 端到端运行。未采信完成声明作为通过证据；本轮未修改实现。
+
+## R-021 [P0] `--queue-capacity 0` 可触发空队列 `pop_front()`，主程序访问冲突/挂起
+
+**证据：** `src/main.cpp:52-54` 把未校验的有符号文本直接转为 `size_t`；`src/main.cpp:126` 直接据此构造队列；`include/queue/bounded_queue.hpp:21,27-31` 允许容量为 0，并在第一次 `push` 时满足 `size() >= capacity_`，随后对空 `deque` 执行 `pop_front()`。实测弹出 Windows“该内存不能为 read”应用程序错误，进程未正常结束。这同时违反队列容量必须为 4～8 的架构边界。
+
+**复现命令：**
+
+```powershell
+.\build\src\Release\edge_agent.exe --video build\test-videos\testsrc_6s.mp4 `
+  --no-vlm --no-pacing --queue-capacity 0 --log build\review-q0.jsonl
+```
+
+**可直接执行的修复答案：**
+
+1. 在 `BoundedQueue` 构造器中拒绝 `capacity == 0`，例如抛出 `std::invalid_argument("BoundedQueue capacity must be greater than zero")`，消除模板本身的未定义行为。
+2. CLI 层先用可检查转换解析整数；仅接受 `4 <= queue_capacity <= 8`，否则向 stderr 输出 `--queue-capacity must be in [4,8]` 并返回退出码 2。负数、溢出、尾随字符同样拒绝，禁止先转成 `size_t`。
+3. 给 `bounded_queue_test` 增加零容量构造失败测试，给 CLI 增加 0、3、9、负数和非数字测试。
+
+**放行边界：** 上述命令必须不再崩溃或挂起，须在 1 秒内以退出码 2 结束；默认容量 6 与边界 4、8 的 drop_oldest 测试仍通过。R-021 关闭前，MVP 不可用于无人值守或简历现场演示。
+
+> **回应（R-021，状态：已接受，2026-08-26）**：全部落实。(1) `include/queue/bounded_queue.hpp` 构造器对 capacity==0 抛出 `std::invalid_argument`；(2) `src/main.cpp` 改为严格整数解析（拒绝负数/溢出/尾随字符）并强制 `--queue-capacity` 在 [4,8]，否则向 stderr 写 `[ARG ERROR]` 并返回 2；(3) `tests/bounded_queue_test.cpp` 增加零容量构造失败用例，新增 `tests/cli_args_test.cpp` 覆盖 0/3/9/-1/abc/6x/超大数等非法值与 4/8 边界。实测 `--queue-capacity 0` 在 0.03s 内以退出码 2 结束。
+> 证据：`include/queue/bounded_queue.hpp`；`src/main.cpp` 解析函数；`tests/cli_args_test.cpp`（ctest 通过）。
+
+## R-022 [P1] 结构化输出解析会从任意自由文本中“捞取”首个 JSON，违反严格协议
+
+**证据：** `src/agent/structured_output.cpp:5-32,38-46` 从第一个 `{` 截取首个平衡对象，忽略其前后文字及第二个对象；`tests/structured_output_test.cpp:37-42` 还明确要求 `Here you go: ... JSON ... done` 通过。该行为与“必须输出单个 JSON 对象、不做自由文本工具调用猜测解析”冲突。
+
+**复现命令：**
+
+```powershell
+.\build\tests\Release\structured_output_test.exe
+```
+
+当前测试 PASS 恰好证明带前后自由文本的 JSON 被接受，而不是证明严格协议成立。
+
+**可直接执行的修复答案：** 去掉 `extract_json_object` 容错路径；只对去除首尾空白后的完整字符串执行 `nlohmann::json::parse`，并要求解析结果消费全部输入且为单个对象。建议把现有“围栏包装 + 前后噪声应成功”用例替换为三个拒绝用例：前缀文本、尾随文本、连续两个 JSON 对象；若产品确实要兼容 Markdown 围栏，只能允许“完整输入恰好是一对围栏，围栏内恰好一个 JSON”，不能容忍围栏外文字。
+
+**放行边界：** 合法 `tool_call/final` 继续通过；自由文本、围栏外噪声、多个对象、未知/缺失/错类型字段全部返回 `Invalid`，且任何工具均未执行。
+
+## R-023 [P1] 视频打开/读取失败被当成正常 EOF，CLI 以 0 报告成功
+
+**证据：** `src/video/ffmpeg_video_source.cpp:21-24` 忽略 `open()` 返回值；`:41-76` 的错误路径没有保存错误码；`:99-110` 把读包/解码错误统一返回流结束。`src/app/pipeline.cpp:36,72-73` 随后记录 `video_done`；`src/main.cpp:143-166` 无失败状态传播并固定返回 0。
+
+**复现命令与实测：**
+
+```powershell
+.\build\src\Release\edge_agent.exe --video build\test-videos\does-not-exist.mp4 `
+  --no-vlm --no-pacing --log build\review-missing.jsonl
+$LASTEXITCODE
+```
+
+实测 `frames_read: 0`、仍打印 done，退出码为 0。
+
+**可直接执行的修复答案：** 让 VideoSource 明确区分 `Frame / Eof / Error`（例如 `ReadResult`），保存 FFmpeg 错误码并用 `av_strerror` 形成诊断；构造后提供 `is_open()/last_error()` 或使用可捕获异常。`video_worker` 遇到 Error 时写 `error` 日志并设置共享失败状态，`main` join 后返回 1；只有真实 EOF 才写正常 `video_done`。
+
+**放行边界：** 不存在、不可读、非视频文件以及注入的 `av_read_frame`/decode 错误均须产生 stderr + JSONL error，退出码非 0；正常 EOF、decoder flush 和资源释放测试仍通过。
+
+## R-024 [P1] `--max-seconds` 只在产生候选后检查，静止或低变化视频会越过限制
+
+**证据：** `src/app/pipeline.cpp:39-42` 对未评估/非候选帧提前 `continue`，而 `max_seconds` 检查位于 RGB 转换和入队之后的 `:70`。因此限制控制的是“下一个候选何时出现”，不是读取视频的前 N 秒。
+
+**复现命令与实测：**
+
+```powershell
+.\build\src\Release\edge_agent.exe --video build\test-videos\black_6s.mp4 `
+  --no-vlm --no-pacing --max-seconds 1 --log build\review-max.jsonl
+```
+
+实测仍读取全部 180 帧。真实 VLM 端到端命令使用动态 fixture 和 `--max-seconds 1` 时也读到第 121 帧，并分析了时间戳 4.00 秒的第二个候选。
+
+**可直接执行的修复答案：** 在每次 `source->read(f)` 成功后、筛帧前计算相对视频时间；若 `elapsed_video_time >= max_seconds` 立即结束。不要把限时检查放在任何 `continue` 之后。新增静止视频、候选稀疏视频和 `--no-vlm` 三条 CLI 测试。
+
+**放行边界：** 6 秒静止 fixture 配 `--max-seconds 1` 时读取量应约为 30 帧（按边界定义允许 1 帧误差），绝不能读满 180 帧；日志 summary 不得包含限制之后的候选。
+
+## R-025 [P1] pacing 直接使用绝对 PTS，非零首 PTS 会造成启动空等
+
+**证据：** `include/video/realtime_pacing_source.hpp:19-29` 把目标墙钟设为 `start + frame.timestamp`，没有减去首帧 PTS。测试 `tests/pacing_test.cpp:42-56` 只覆盖首 PTS 接近 0 的 fixture，因此漏掉该情况。
+
+**复现命令与实测：**
+
+```powershell
+third_party\ffmpeg\bin\ffmpeg.exe -y -loglevel error -f lavfi `
+  -i "testsrc=size=160x90:rate=10:duration=1" -output_ts_offset 5 `
+  -pix_fmt yuv420p build\test-videos\review-offset.mp4
+.\build\src\Release\edge_agent.exe --video build\test-videos\review-offset.mp4 `
+  --no-vlm --max-seconds 1 --log build\review-offset.jsonl
+```
+
+fixture 首 PTS 为 5.000 秒，程序在交付第一帧前实测等待约 5.10 秒。
+
+**可直接执行的修复答案：** 首次成功读取时保存 `first_pts_seconds`，所有 pacing 目标改为 `start_wall + (frame.timestamp - first_pts_seconds)`；R-024 的限时也使用同一相对时间。新增首 PTS 为 +5 秒和负 PTS 的 pacing 测试。
+
+**放行边界：** +5 秒 fixture 的首帧应立即交付，1 秒视频总墙钟仍约 1 秒；原 10 秒 pacing 测试继续在既定容差内且不丢帧。
+
+## R-026 [P1] producer 的 stop_token 无法中断 `sleep_until`
+
+**证据：** `src/app/pipeline.cpp:20,35` 接收并检查 stop_token，但一旦进入 `RealtimePacingSource::read`，`include/video/realtime_pacing_source.hpp:29` 使用不可取消的 `std::this_thread::sleep_until`。现有测试只验证 `BoundedQueue::pop` 的 consumer stop（`tests/bounded_queue_test.cpp:75-90`），没有验证 pacing producer stop。
+
+**可直接执行的修复答案：** 让 pacing 等待接收 stop_token，并改用可停止等待（例如 `condition_variable_any::wait_until(lock, st, target, predicate)`）；stop 到达时 `read` 返回明确的 Cancelled 状态。给测试构造首帧后下一帧 PTS 很远的 fixture，启动 producer 后请求 stop。
+
+**放行边界：** producer 正在等待未来 PTS 时，`request_stop()` 后 500 ms 内必须 join；不得把取消记录成正常 EOF 或 FFmpeg 错误。
+
+## R-027 [P1] Agent 回填 ToolResult 前没有保留模型的 assistant tool_call
+
+**证据：** `src/agent/agent.cpp:36-39` 得到模型响应后没有把 `resp.text` 作为 Assistant 消息加入上下文；`:71-77` 只追加一条 User 消息形式的 ToolResult。真实端到端运行中，模型执行 `notify` 后的下一代输出了 `type=tool_result`，被程序判为 `UNKNOWN_TYPE:tool_result`，浪费一次生成预算；第三次才完成 final。当前 Mock 测试只查第二轮上下文含 `success=true`（`tests/agent_loop_test.cpp:96-99`），没有断言前一条 assistant tool_call 存在。
+
+**复现命令：**
+
+```powershell
+.\build\src\Release\edge_agent.exe --video build\test-videos\testsrc_6s.mp4 `
+  --model models\InternVL3-1B-Instruct-Q8_0.gguf `
+  --mmproj models\mmproj-InternVL3-1B-Instruct-Q8_0.gguf `
+  --skill skills\door-camera.md --no-pacing --max-seconds 1 `
+  --log build\review-e2e.jsonl
+```
+
+**可直接执行的修复答案：** 解析成功后先把原始、已验证的 `resp.text` 以 `Role::Assistant` 追加，再把 ToolResult 以 `Role::Tool` 追加；提示序列必须是 `assistant(tool_call) -> tool(tool_result) -> assistant(...)`。MockModel 应逐角色和逐文本断言该顺序，而不只做字符串包含检查。
+
+**放行边界：** 成功、执行失败、白名单拒绝、非法参数四种 ToolResult 的下一代上下文都必须同时包含对应 assistant 调用和 ToolResult；第 3 次 tool_call 仍不得执行，R-002/R-013 的 off-by-one 语义保持通过。
+
+## R-028 [P1] CMake 会静默接受 FFmpeg 运行 DLL 缺失和无法验证 llama commit
+
+**证据：** `CMakeLists.txt:28-53` 只把头文件/导入库纳入 FATAL_ERROR；`:71-80` 若 `bin/*.dll` 为空就直接跳过复制。`:102-113` 仅在 git 命令成功且 commit 不匹配时失败；git 不存在或 `rev-parse` 失败时反而继续配置。这不满足依赖缺失必须列出缺失项、版本、位置和恢复步骤并终止的决策。
+
+**可直接执行的修复答案：**
+
+- 用 `find_file(... NO_DEFAULT_PATH)` 逐项检查 `avcodec-63.dll`、`avformat-63.dll`、`avutil-61.dll`、`swscale-10.dll`，缺一即 FATAL_ERROR；把各 imported target 的 `IMPORTED_LOCATION` 指向实际 DLL 文件，不要指向 bin 目录。
+- `_LLAMA_REV_RESULT` 非 0 或输出不是 40 位 commit 时也 FATAL_ERROR，并打印 git 检查失败、期望 commit、期望目录和恢复命令。
+- 增加隔离配置测试，分别模拟缺 include、缺 lib、缺 DLL、git 不可用、commit 错误，并匹配诊断关键字段。
+
+**放行边界：** 五类缺失配置均必须在 configure 阶段失败且不得从系统目录/其他供应方回退；完整依赖下全新 build 目录配置、编译和 15 项测试通过。
+
+## R-029 [P2] `save_event` 与运行 logger 用两个未共享锁的流并发追加同一文件
+
+**证据：** `src/main.cpp:77,103-105` 把相同路径同时交给 `JsonlLogger` 和 ToolContext；`include/log.hpp:43-46` 的 mutex 只保护 logger 自己的 `ofstream`，而 `src/agent/builtin_tools.cpp:83-97` 每次另开一个不受该 mutex 管理的 `ofstream`。Video Worker 可同时写 logger，因此同一 JSONL 文件的跨流写入顺序和行原子性没有 C++ 层保证。
+
+**可直接执行的修复答案：** 不让 `save_event` 自行打开文件；向 ToolContext 注入同一个线程安全事件写入函数/`JsonlLogger&`，统一通过一个锁和一个流写入，例如 `logger.event("saved_event", {{"event",...},{"description",...},{"event_time",...}})`。不要用业务时间字符串覆盖公共单调 `timestamp` 字段。
+
+**放行边界：** 两个线程各写至少 10,000 行（一个写运行事件、一个调用 save_event），最终每一行均可独立 JSON 解析、总行数精确、各 type 数量精确；再跑一次真实端到端工具调用。
+
+## R-030 [P2] 清空 KV 时没有重置 sampler，采样历史会跨生成和跨候选残留
+
+**证据：** `src/model/llama_vlm.cpp:62-70` sampler 在模型生命周期只创建一次；每次生成仅在 `:114-115` 清空 KV，未调用锁定版本已提供的 `llama_sampler_reset`（`third_party/llama.cpp/include/llama.h:1329`）。包含 recent-token 状态的 penalties sampler 因而可能把上一候选/上一生成的输出带入下一次采样决策。
+
+**可直接执行的修复答案：** 在每次独立 `generate` 开始、清空 KV 的同时调用 `llama_sampler_reset(sampler_)`；结合 R-027，把真实对话历史显式放进 prompt，而不是依赖 sampler 隐状态。用固定 seed 对同一输入做“新实例结果”和“复用实例结果”对照测试。
+
+**放行边界：** 固定 seed 下，同一独立输入在新实例与复用实例中的 token 序列一致；多候选连续推理仍通过且无资源泄漏。
+
+## R-031 [P3] 手册公开的 `--help` 命令返回用法错误码 2
+
+**证据：** `src/main.cpp:37-57` 没有 `--help/-h` 分支，`:72-74` 因解析失败打印 usage 并返回 2；《评审请求与运行手册》2.3 将 `edge_agent.exe --help` 作为查看帮助的公开命令。实测确实打印帮助但退出码为 2。
+
+**可直接执行的修复答案：** 在解析其他参数前识别 `--help`/`-h`，打印包含 `--analysis-width` 的完整参数表并返回 0；无参数仍可返回 2。新增 CLI 测试断言 stdout、关键参数和退出码。
+
+**放行边界：** `edge_agent.exe --help` 与 `-h` 均退出 0；未知参数和缺少参数值仍退出 2 且给出明确错误。
+
+## 10 项架构约束逐条结论
+
+1. **PASS**：视频实现仅使用 FFmpeg；未发现 OpenCV、seek、二遍扫描或整段缓存，解码路径为单向 `av_read_frame`。
+2. **FAIL（R-025、R-026）**：基础 0 起点 fixture 的 PTS pacing 通过且不丢帧，但非零首 PTS 和 stop 中断不满足。
+3. **PASS**：`FrameFilter` 只读取 Y plane 并降采样为默认 160×90；RGB 转换位于候选判定之后。
+4. **FAIL（R-021）**：正常容量下 push 非阻塞、drop_oldest 顺序和 O(1) 容量成立；CLI 未强制 4～8，零容量会崩溃。
+5. **PASS**：最多 3 次生成；第 3 次 tool_call 未执行，记录 `unexecuted_tool` 与 `no_followup_generation_budget`，未伪造 ToolResult。
+6. **PASS，但有 R-027 可靠性缺陷**：成功/失败/拒绝/非法参数 ToolResult 会在下一次生成前进入上下文；但缺少对应 assistant tool_call 消息。
+7. **PASS**：实际权限唯一来自 C++ ToolRegistry；默认注册恰好 notify/save_event/get_time/speak，Skill 不能扩权。
+8. **FAIL（R-022）**：字段级严格校验存在，但顶层解析仍从自由文本猜取 JSON。
+9. **FAIL（R-026）**：两个 Worker 使用 `std::jthread + stop_token`，consumer 可停止；pacing producer 的等待不可停止。
+10. **有条件 FAIL（R-029）**：所有记录是 JSONL；但 save_event 与运行日志同路径时没有共享串行化机制。
+
+## 验证结果与最终结论
+
+- 增量构建：**PASS**。当前终端的 `cmake` 不在 PATH，使用现有 cache 记录的 `C:\Program Files\CMake\bin\cmake.exe --build build --config Release` 成功。
+- 自动化测试：**PASS，15/15**，总用时 41.85 秒；其中真实 VLM smoke 与 Skill 测试均运行，不是跳过。
+- git/大文件：**PASS**。`.gitignore` 覆盖 MP4/GGUF/build/logs/third_party/ffmpeg；当前索引和历史文件名抽查未发现误提交；llama submodule 索引与实际 HEAD 均为 `c1d0e7a004015f23bc0233470b747b596f29b264`。
+- 真实 CLI 端到端：**主路径可运行**。InternVL3 + mmproj 加载成功，2 个候选均完成 Agent，实际执行一次 notify，JSONL 8/8 行可解析；同时复现 R-024、R-027。
+
+**最终结论：FAIL（当前不应作为无人值守或现场简历演示版本）。阻塞项为 R-021，以及 R-022～R-028 的 P1。修复这些项并通过各条放行边界后，可重新评为“简历演示 PASS”；R-029～R-031 不阻塞受控人工演示，但应记录处置。**
+
+---
+
+# 第十轮部分复审：R-021 修复验收
+
+复审时间：2026-08-26
+
+本轮只复审已有正式回应的 R-021；R-022～R-031 虽已有部分工作区修改，但尚无对应正式回应，本轮不提前裁定。
+
+## R-021 复审结论：PASS，P0 阻塞已解除
+
+当前文件证据与独立运行结果一致：
+
+- `include/queue/bounded_queue.hpp` 的构造器对零容量抛出 `std::invalid_argument`；
+- `src/main.cpp` 在转换为 `size_t` 前执行严格整数解析，并强制 CLI 容量处于 `[4,8]`；
+- `tests/bounded_queue_test.cpp` 包含零容量构造失败断言；
+- `tests/cli_args_test.cpp` 覆盖 0、3、9、负数、非数字、尾随字符、溢出以及 4/8 边界。
+
+独立验收命令与结果：
+
+```powershell
+C:\Program Files\CMake\bin\cmake.exe --build build --config Release `
+  --target bounded_queue_test cli_args_test edge_agent
+# PASS
+
+.\build\tests\Release\bounded_queue_test.exe
+# PASS
+
+.\build\tests\Release\cli_args_test.exe .\build\src\Release\edge_agent.exe
+# PASS
+
+.\build\src\Release\edge_agent.exe --video build\test-videos\testsrc_6s.mp4 `
+  --no-vlm --no-pacing --queue-capacity 0 --log build\review-r021.jsonl
+# 约 179 ms 内退出；exit code 2；无访问冲突、无挂起
+
+.\build\src\Release\edge_agent.exe --video build\test-videos\testsrc_6s.mp4 `
+  --no-vlm --no-pacing --queue-capacity 4 --max-seconds 0.1 `
+  --log build\review-r021-q4.jsonl
+# exit code 0
+```
+
+**放行边界更新：** R-021 从阻塞列表移除。当前 MVP 仍被尚未复审关闭的 R-022～R-028 阻塞；不能仅凭 R-021 通过改判整体 PASS。待相应条目出现正式回应后再逐项复验，不重复本轮已通过内容。
+
+---
+
+# 第十一轮：R-022～R-031 修复回应与最终复验
+
+复验时间：2026-08-27
+
+本节只追加处置结果，不改写前述原始 review。除逐条复验旧问题外，本轮还按用户最新需求完成双模型工具决策、唯一 `push_frame` 工具、只显示成功推送帧的局域网面板及无人值守驻留。
+
+> **回应（R-022，状态：已接受）**：`src/agent/structured_output.cpp:18-27,33-36,96-111` 已删除从任意文字中捞取 JSON 的逻辑；仅允许完整单对象，唯一宽容项是完整输入恰为一对 Markdown 围栏。`tests/structured_output_test.cpp` 覆盖前缀、尾缀、连续对象、未知/缺失/错类型字段，非法输入不执行工具。验收：`structured_output_test` PASS。
+
+> **回应（R-023，状态：已接受）**：`include/video/video_source.hpp` 明确区分 `Frame/Eof/Error/Cancelled`；`src/video/ffmpeg_video_source.cpp:163-205` 保存并返回打开、读包、解码错误；`src/app/pipeline.cpp:70-77,121-123` 写 error 并设置 `video_failed`；`src/main.cpp:335-338` 返回非零。`tests/video_source_test.cpp:34` 与 `tests/cli_args_test.cpp` 覆盖缺失/非法视频。验收：相关测试及完整 CTest PASS。
+
+> **回应（R-024，状态：已接受）**：`src/app/pipeline.cpp:80-87` 在每个成功读取帧之后、任何筛帧 `continue` 之前按相对视频时间检查 `max_seconds`。静止视频与 CLI 边界用例已纳入测试。验收：`frame_filter_test`、`cli_args_test` PASS。
+
+> **回应（R-025，状态：已接受）**：`src/video/realtime_pacing_source.cpp` 首帧记录基准 PTS，等待目标使用相对时间；`src/app/pipeline.cpp:80-87` 的限时也减去首帧时间。`tests/pacing_test.cpp` 覆盖 +5 秒 offset 与负/非单调策略。验收：`pacing_test` 11.95 秒 PASS。
+
+> **回应（R-026，状态：已接受）**：`src/video/realtime_pacing_source.cpp:27` 使用 `condition_variable_any::wait_until(lock, stop_token, ...)`，取消返回 `Cancelled`；pipeline 将其记录为 stopped 而非 EOF/error。`tests/pacing_test.cpp` 断言请求停止后 500 ms 内 join。验收：`pacing_test` PASS。
+
+> **回应（R-027，状态：已接受）**：`src/agent/agent.cpp:48,99-103` 严格按 `Assistant(tool_call) -> Tool(tool_result)` 回填；成功、下游失败、白名单拒绝、非法参数均可见。`tests/agent_loop_test.cpp:56-58` 逐角色、逐文本检查顺序，并保留第三次调用不执行的步数边界。验收：`agent_loop_test` PASS。
+
+> **回应（R-028，状态：已接受）**：`CMakeLists.txt:48-67` 逐项 `find_file(... NO_DEFAULT_PATH)` 检查版本化 FFmpeg DLL；`:129-147` 对 git 检查失败、非 40 位或 commit 不匹配全部 FATAL_ERROR。`tests/dependency_error_tests.ps1` 隔离验证缺 include/lib/DLL、git 不可用及 commit 错误。验收：`dependency_error_tests` 50.33 秒 PASS，完整配置/构建 PASS。
+
+> **回应（R-029，状态：已接受）**：产品范围已收敛为唯一工具 `push_frame`，旧 `save_event` 已从 `ToolRegistry` 和 `ToolContext` 删除；`src/app/pipeline.cpp:289-291` 的 `frame_pushed` 与运行事件统一走同一个 `JsonlLogger`。`tests/log_serialization_test.cpp` 并发写两类事件并逐行解析、核对精确计数。验收：`log_serialization_test` PASS。
+
+> **回应（R-030，状态：已接受）**：`src/model/llama_vlm.cpp:120-121` 和 `src/model/llama_text.cpp:70-71` 每次生成同时清 KV 与重置 sampler；视觉感知默认 greedy、固定 seed。`tests/determinism_test.cpp` 对比新实例与复用实例。验收：`determinism_test` 23.56 秒 PASS。
+
+> **回应（R-031，状态：已接受）**：`src/main.cpp:231-238` 在正常参数解析前识别 `--help/-h` 并返回 0，帮助表包含双模型与 Web 参数；未知参数/缺值仍返回 2。`tests/cli_args_test.cpp:57-66` 覆盖两种帮助入口。验收：`cli_args_test` PASS；手工 `edge_agent.exe --help` 退出 0。
+
+## 新需求实现与独立证据
+
+- 双模型边界：InternVL3-1B 只生成视觉事实；Qwen2.5-1.5B 只读事实和 Skill。`src/model/tool_decision_model.cpp` 只接受完整精确的 `PUSH`/`FINAL`，再映射为 Agent JSON；否定词 `not visible` 优先处理。`tests/decision_model_test.cpp` 使用真实 Qwen 权重验证正例、空门口负例和 `visible` 子串否定负例，PASS。
+- 唯一工具：`src/agent/builtin_tools.cpp:14-30` 只注册 `push_frame(summary)`；旧四工具均被拒绝。`tool_registry_test` PASS。
+- 面板放行边界：`src/web/dashboard.cpp` 先隐藏候选，只有 `publish_push` 成功后才进入 `/api/state`；历史上限只在成功推送时裁剪，未推送候选不会挤掉已推送历史。`dashboard_test` PASS。
+- 无人值守：实测 `--unattended --web-port 18082` 在视频状态为 complete 后进程仍存活，`/api/state` 可读取；验证后仅停止本次测试进程。
+- 真实视频正例：Pexels 6170054 的真实门口投递片段，不是纯色生成视频。`build/real-positive-release.jsonl` 记录 `frames_pushed=1`、成功 `push_frame`；`/api/state` 只有 1 条 pushed 事件；`/frame/1.bmp` 返回 HTTP 200、`image/bmp`、BM 签名、1,069,878 bytes。
+- 同源空门口负例：`build/real-negative-release.jsonl` 记录事实 `entrance: visible; ground_object/person/hazard: not visible`，Qwen 返回 final，`frames_pushed=0`，`/api/state.events=[]`。
+- 真实素材来源：`https://www.pexels.com/video/a-delivery-woman-leaving-a-box-at-a-door-6170054/`。纯色 fixture 只用于低层自动化测试，不作为视觉能力证据。
+
+## 最终验收与放行结论
+
+```powershell
+C:\Program Files\CMake\bin\cmake.exe --build build --config Release
+C:\Program Files\CMake\bin\ctest.exe --test-dir build -C Release --output-on-failure
+```
+
+结果：构建 PASS，无本轮编译警告；CTest **22/22 PASS**，总用时 119.69 秒。R-021～R-031 的放行边界均已满足，原 P0/P1 阻塞清零。
+
+**MVP 简历演示结论：PASS。** 放行范围是“本地流式视频筛帧 + 双小模型事实/决策分工 + 单一关键帧推送工具 + 局域网只读面板 + 有界无人值守运行”。不得将其描述为安防级识别：InternVL3-1B 在真实正例中曾把 `hazard` 误判为 visible；当前 Door Camera Skill 只演示门口、地面物体和人同帧可见的投递交互，不承诺可靠识别人离开后的孤立包裹。

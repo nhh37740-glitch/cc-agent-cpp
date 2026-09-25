@@ -24,7 +24,9 @@ public:
     FFmpegFileSource(const FFmpegFileSource&) = delete;
     FFmpegFileSource& operator=(const FFmpegFileSource&) = delete;
 
-    bool read(Frame& frame) override;
+    ReadStatus read(Frame& frame) override;
+    bool is_open() const override { return fmt_ctx_ && codec_ctx_ && open_ok_; }
+    const std::string& last_error() const override { return last_error_; }
 
     double fps() const { return fps_; }
     int stream_width() const { return width_; }
@@ -34,13 +36,16 @@ public:
 
 private:
     bool open(const char* path);
+    void fail(const std::string& context, int av_err = 0);
     void close();
     // 从解码器取出一个已解出的 AVFrame（含 EOF flush 逻辑）；
-    // 返回：1=得到一帧，0=流结束，-1=暂时无帧继续读包
+    // 返回：1=得到一帧，0=流结束，-1=错误
     int next_decoded_frame();
 
     std::string path_;
     bool realtime_pacing_ = false;
+    bool open_ok_ = false;
+    std::string last_error_;
 
     AVFormatContext* fmt_ctx_ = nullptr;
     AVCodecContext* codec_ctx_ = nullptr;

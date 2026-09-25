@@ -5,8 +5,11 @@
 //   {"type":"tool_call","name":"...","arguments":{...}}
 //   {"type":"final","content":"..."}
 // 解析规则（全部安全失败，绝不抛出异常逃逸）：
-// - 先剥掉 Markdown 代码围栏等包装，提取首个平衡的 JSON 对象；
-// - 严格校验字段：未知键、缺失键、类型错误均判定为 INVALID；
+// - 整个输入（去除首尾空白）必须恰好是一个 JSON 对象；
+//   任何前缀/尾随自由文本、多个对象都判定 INVALID；
+// - 唯一宽容项：完整输入恰好是一对 Markdown 围栏（```json ... ```），
+//   且围栏内恰好一个对象——这是小模型常见且无害的包装；
+// - 字段级严格校验：未知键、缺失键、类型错误均判定为 INVALID；
 // - 解析结果只用于受白名单控制的工具执行。
 
 #include <nlohmann/json.hpp>
@@ -29,9 +32,6 @@ struct ParsedOutput {
     // Invalid 时给出原因（用于日志与回填模型的错误反馈）
     std::string error;
 };
-
-// 从原始文本中提取首个平衡的 {...} 子串；失败返回空串。
-std::string extract_json_object(const std::string& text);
 
 ParsedOutput parse_model_output(const std::string& raw_text);
 

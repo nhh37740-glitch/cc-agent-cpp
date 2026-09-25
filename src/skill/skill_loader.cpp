@@ -50,26 +50,17 @@ bool load_skill(const std::string& path, Skill& out, std::string& error) {
 std::string build_system_prompt(const Skill& skill,
                                 const std::vector<std::string>& allowed_tools) {
     std::ostringstream ss;
-    ss << "You are a local video monitoring agent running on an edge device.\n\n";
-    ss << "# Your task (skill)\n" << skill.content << "\n\n";
-
-    ss << "# Available tools\n";
-    for (const auto& t : allowed_tools) ss << "- " << t << "\n";
-    ss << "\n";
-
-    ss << "# Output protocol (mandatory)\n";
-    ss << "Analyze the given image. Respond with EXACTLY ONE JSON object and nothing "
-          "else. No markdown, no code fences, no extra words.\n";
-    ss << "The JSON object must have this exact schema:\n";
-    ss << "- To call a tool: {\"type\":\"tool_call\",\"name\":\"TOOL_NAME\","
-          "\"arguments\":{...}}\n";
-    ss << "- If no action is required: {\"type\":\"final\",\"content\":\"short reason\"}\n";
-    ss << "Every response must contain the key \"type\" whose value is either "
-          "\"tool_call\" or \"final\".\n\n";
-    ss << "Example correct responses:\n"
-       << "{\"type\":\"tool_call\",\"name\":\"notify\","
-          "\"arguments\":{\"text\":\"A package appeared near the door\"}}\n"
-       << "{\"type\":\"final\",\"content\":\"Nothing notable in this frame.\"}\n";
+    const bool push_allowed =
+        std::find(allowed_tools.begin(), allowed_tools.end(), "push_frame") != allowed_tools.end();
+    ss << "Return exactly one JSON object and no other text. Apply the rules below to factual "
+          "checklist text from a separate vision model. Never invent facts or use a change "
+          "score as evidence. If every rule is false, return "
+          "{\"type\":\"final\",\"content\":\"reason\"}. ";
+    if (push_allowed) {
+        ss << "If any rule is true, return {\"type\":\"tool_call\",\"name\":\"push_frame\","
+              "\"arguments\":{\"summary\":\"visible evidence\"}}. ";
+    }
+    ss << "A true rule must never be returned as final.\nRules:\n" << skill.content;
     return ss.str();
 }
 

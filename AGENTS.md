@@ -22,7 +22,7 @@
 ## 技术栈
 
 - C++20 + CMake。视频层只用 FFmpeg（libavformat/libavcodec/libswscale），禁止引入 OpenCV。
-- 模型运行时是 llama.cpp 的 multimodal/mtmd 接口，模型为 InternVL3-1B-Instruct GGUF。
+- 模型运行时为 llama.cpp：InternVL3-1B-Instruct GGUF + mtmd 只负责图片事实感知；Qwen2.5-1.5B-Instruct GGUF 只读取 Skill、工具定义和视觉事实并决定是否调用工具。禁止让 InternVL 执行工具决策。
 - 并发用 `std::jthread` + `std::stop_token`，两个 Worker：Video 与 VLM/Agent。
 
 ## 依赖接入
@@ -41,8 +41,10 @@
   - 只有仍保留至少一次后续模型生成机会时才执行新的工具调用；否则返回 `STEP_LIMIT_REACHED`，记录并结束；
   - 每个已执行或已拒绝的工具调用产生的 ToolResult，必须在下一次模型生成前加入上下文；
   - `STEP_LIMIT_REACHED` 是 AgentResult 的终止状态，不是任何工具的 ToolResult；日志须记录最后一个未执行的 tool_call 及 reason=no_followup_generation_budget，不伪造 ToolResult。
-- 工具白名单由 C++ ToolRegistry 强制执行；Skill 文件声明的权限不可信。第一版只有 4 个工具：notify、save_event、get_time、speak。
-- 模型输出必须是结构化 JSON（`tool_call` / `final`），不做自由文本工具调用的猜测解析。
+- 工具白名单由 C++ ToolRegistry 强制执行；Skill 文件声明的权限不可信。当前唯一工具是 `push_frame(summary)`；旧的 notify、save_event、get_time、speak 不得重新注册。
+- Qwen 工具路由只接受完整、精确的 `PUSH` / `FINAL` 枚举，不从其它自由文本猜测；适配器将该明确决定转换为严格结构化 JSON（`tool_call` / `final`）交给 Agent Loop。视觉感知与 Agent 输出的 JSON 都必须完整解析，禁止从前后噪声中捞取对象。
+- 远程面板只允许展示 `push_frame` 实际成功的关键帧及其视觉事实/摘要；未推送候选帧不得出现在 `/api/state`，历史必须有界。
+- 无人值守模式必须要求显式 Web 端口，允许监听局域网地址，并在视频结束后持续提供只读面板直到进程被停止。
 
 ## 测试资产规则
 
@@ -50,6 +52,7 @@
 - 初始化 git 时先用 `.gitignore` 排除视频、模型权重、构建产物和运行日志。
 - 测试输入路径通过 CLI 参数或配置传入；禁止硬编码任何视频文件名。
 - 自动化测试使用单独生成的小型 fixture；大文件只用于手工或端到端测试。
+- 能力验收必须使用真实、来源可追溯的视频正负样本；纯色、彩条或其它合成画面只能测试解码/筛帧，不能作为视觉识别或工具决策通过证据。
 
 ## 代码风格
 

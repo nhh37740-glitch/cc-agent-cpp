@@ -34,11 +34,36 @@ int main() {
         CHECK(r.content == "nothing to do", "content 应保留");
     }
 
-    // Markdown 围栏包装 + 前后噪声
+    // Markdown 围栏：完整输入恰为一对围栏时接受
     {
-        auto r = parse_model_output("Here you go:\n```json\n"
-                                    "{\"type\":\"final\",\"content\":\"ok\"}\n```\ndone");
-        CHECK(r.type == OutputType::Final && r.content == "ok", "应剥离围栏包装");
+        auto r = parse_model_output("```json\n{\"type\":\"final\",\"content\":\"ok\"}\n```");
+        CHECK(r.type == OutputType::Final && r.content == "ok", "纯围栏包装应接受");
+    }
+    {
+        auto r = parse_model_output("```\n{\"type\":\"final\",\"content\":\"ok2\"}\n```");
+        CHECK(r.type == OutputType::Final && r.content == "ok2", "无语言标注的纯围栏应接受");
+    }
+
+    // 拒绝：围栏外有文字（前缀或尾随）
+    CHECK(parse_model_output("Here you go:\n```json\n"
+                             "{\"type\":\"final\",\"content\":\"ok\"}\n```\ndone")
+              .error != "",
+          "围栏外有文字应拒绝");
+    CHECK(parse_model_output("Answer:\n{\"type\":\"final\",\"content\":\"x\"}").error != "",
+          "前缀自由文本应拒绝");
+    CHECK(parse_model_output("{\"type\":\"final\",\"content\":\"x\"} thanks").error != "",
+          "尾随自由文本应拒绝");
+
+    // 拒绝：连续两个对象
+    CHECK(parse_model_output("{\"type\":\"final\",\"content\":\"a\"}"
+                             "{\"type\":\"final\",\"content\":\"b\"}")
+              .error != "",
+          "多个对象应拒绝");
+
+    // 首尾空白仍允许
+    {
+        auto r = parse_model_output("   \n{\"type\":\"tool_call\",\"name\":\"get_time\"}\n  ");
+        CHECK(r.type == OutputType::ToolCall, "首尾空白不影响解析");
     }
 
     // arguments 缺省 → 空对象
@@ -49,19 +74,19 @@ int main() {
     }
 
     // 非法：完全不是 JSON
-    CHECK(parse_model_output("I think we should call the police.").error == "NO_JSON_OBJECT",
-          "纯文本应返回 NO_JSON_OBJECT");
+    CHECK(parse_model_output("I think we should call the police.").error == "NOT_A_SINGLE_JSON_OBJECT",
+          "纯文本应返回 NOT_A_SINGLE_JSON_OBJECT");
 
     // 非法：括号不平衡
-    CHECK(parse_model_output("{\"type\":\"final\",\"content\":\"x\"").error == "NO_JSON_OBJECT",
+    CHECK(parse_model_output("{\"type\":\"final\",\"content\":\"x\"").error != "",
           "括号不平衡应失败");
 
-    // 非法：JSON 语法错误
-    CHECK(parse_model_output("{\"type\": }").error == "JSON_PARSE_ERROR",
-          "语法错误应返回 JSON_PARSE_ERROR");
+    // 非法：JSON 语法错误（整体无法解析为单个对象）
+    CHECK(parse_model_output("{\"type\": }").error != "",
+          "语法错误应失败");
 
-    // 非法：数组而非对象（无 '{'，直接 NO_JSON_OBJECT）
-    CHECK(parse_model_output("[1,2,3]").error == "NO_JSON_OBJECT", "数组应拒绝");
+    // 非法：数组而非对象（整体不是 JSON 对象）
+    CHECK(parse_model_output("[1,2,3]").error == "NOT_AN_OBJECT", "数组应拒绝");
 
     // 非法：缺少 type
     CHECK(parse_model_output(R"({"name":"notify"})").error == "MISSING_OR_INVALID_TYPE",

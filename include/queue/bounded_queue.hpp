@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <stdexcept>
 #include <stop_token>
 #include <utility>
 
@@ -18,7 +19,11 @@ namespace queue {
 template <typename T>
 class BoundedQueue {
 public:
-    explicit BoundedQueue(std::size_t capacity) : capacity_(capacity) {}
+    explicit BoundedQueue(std::size_t capacity) : capacity_(capacity) {
+        if (capacity_ == 0) {
+            throw std::invalid_argument("BoundedQueue capacity must be greater than zero");
+        }
+    }
 
     // 非阻塞入队。队列已关闭则丢弃；满则淘汰最旧。返回是否真正入队。
     bool push(T item) {

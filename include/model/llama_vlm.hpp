@@ -23,8 +23,8 @@ struct VLMParams {
     int32_t n_batch = 256;
     int32_t n_threads = 0;          // 0 = 自动
     int32_t n_gpu_layers = 0;       // MVP 使用 CPU
-    uint32_t seed = 4294967295u;    // 默认随机
-    float temp = 0.2f;
+    uint32_t seed = 42;
+    float temp = 0.0f;              // 感知事实需要可复现，默认 greedy
     int max_tokens = 256;
 };
 

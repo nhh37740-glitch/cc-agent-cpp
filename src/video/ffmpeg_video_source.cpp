@@ -3,7 +3,9 @@
 // - 单向 av_read_frame → send_packet → receive_frame，绝不 seek；
 // - EOF 后发送 NULL packet 触发 decoder flush，把缓冲帧全部取出；
 // - PTS 缺失时用 best_effort_timestamp，仍缺失则按 1/fps 合成；
-// - 非单调时间戳（<=上一帧）直接丢弃并计数，不进入下游。
+// - 非单调时间戳（<=上一帧）直接丢弃并计数，不进入下游；
+// - 打开失败与读包/解码错误以 ReadStatus::Error 区分于正常 EOF，
+//   并保存 FFmpeg 错误码的诊断文本。
 
 #include "video/ffmpeg_video_source.hpp"
 
@@ -20,11 +22,21 @@ namespace video {
 
 FFmpegFileSource::FFmpegFileSource(const char* path, bool realtime_pacing)
     : path_(path), realtime_pacing_(realtime_pacing) {
-    open(path);
+    open_ok_ = open(path);
 }
 
 FFmpegFileSource::~FFmpegFileSource() {
     close();
+}
+
+void FFmpegFileSource::fail(const std::string& context, int av_err) {
+    char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+    if (av_err != 0) {
+        av_strerror(av_err, buf, sizeof(buf));
+        last_error_ = context + ": " + buf;
+    } else {
+        last_error_ = context;
+    }
 }
 
 void FFmpegFileSource::close() {
@@ -39,15 +51,26 @@ void FFmpegFileSource::close() {
 
 bool FFmpegFileSource::open(const char* path) {
     int ret = avformat_open_input(&fmt_ctx_, path, nullptr, nullptr);
-    if (ret < 0) return false;
+    if (ret < 0) {
+        fail("无法打开视频文件 " + path_, ret);
+        return false;
+    }
 
     ret = avformat_find_stream_info(fmt_ctx_, nullptr);
-    if (ret < 0) { close(); return false; }
+    if (ret < 0) {
+        fail("读取流信息失败", ret);
+        close();
+        return false;
+    }
 
     const AVCodec* codec = nullptr;
     video_stream_index_ = av_find_best_stream(fmt_ctx_, AVMEDIA_TYPE_VIDEO, -1, -1,
                                               const_cast<const AVCodec**>(&codec), 0);
-    if (video_stream_index_ < 0 || !codec) { close(); return false; }
+    if (video_stream_index_ < 0 || !codec) {
+        fail("未找到可解码的视频流");
+        close();
+        return false;
+    }
 
     AVStream* stream = fmt_ctx_->streams[video_stream_index_];
     time_base_ = av_q2d(stream->time_base);
@@ -61,19 +84,35 @@ bool FFmpegFileSource::open(const char* path) {
     if (!(fps_ > 0.0 && std::isfinite(fps_))) fps_ = 30.0;
 
     codec_ctx_ = avcodec_alloc_context3(codec);
-    if (!codec_ctx_) { close(); return false; }
+    if (!codec_ctx_) {
+        fail("分配解码器上下文失败");
+        close();
+        return false;
+    }
     ret = avcodec_parameters_to_context(codec_ctx_, stream->codecpar);
-    if (ret < 0) { close(); return false; }
+    if (ret < 0) {
+        fail("复制编码参数失败", ret);
+        close();
+        return false;
+    }
 
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "threads", "auto", 0);
     ret = avcodec_open2(codec_ctx_, codec, &opts);
     av_dict_free(&opts);
-    if (ret < 0) { close(); return false; }
+    if (ret < 0) {
+        fail("打开解码器失败", ret);
+        close();
+        return false;
+    }
 
     frame_ = av_frame_alloc();
     packet_ = av_packet_alloc();
-    if (!frame_ || !packet_) { close(); return false; }
+    if (!frame_ || !packet_) {
+        fail("分配 AVFrame/AVPacket 失败");
+        close();
+        return false;
+    }
     return true;
 }
 
@@ -96,24 +135,33 @@ int FFmpegFileSource::next_decoded_frame() {
                 input_eof_ = true;
                 continue;
             }
-            if (ret < 0) return 0;                    // 读包错误：视为流结束
+            if (ret < 0) {                            // 读包错误：明确报错
+                fail("av_read_frame 失败", ret);
+                return -1;
+            }
             if (packet_->stream_index != video_stream_index_) {
                 av_packet_unref(packet_);
                 continue;
             }
             ret = avcodec_send_packet(codec_ctx_, packet_);
             av_packet_unref(packet_);
-            if (ret < 0 && ret != AVERROR(EAGAIN)) return 0;  // 发送错误：结束
+            if (ret < 0 && ret != AVERROR(EAGAIN)) {  // 发送错误：明确报错
+                fail("avcodec_send_packet 失败", ret);
+                return -1;
+            }
             continue;
         }
         if (ret == AVERROR_EOF) return 0;             // 解码器报告 EOF
-        return 0;                                     // 其他解码错误：结束
+        if (ret < 0) {
+            fail("avcodec_receive_frame 失败", ret);
+            return -1;                                // 解码错误
+        }
     }
 }
 
-bool FFmpegFileSource::read(Frame& out) {
-    if (!fmt_ctx_ || !codec_ctx_) return false;
-    if (drained_) return false;
+ReadStatus FFmpegFileSource::read(Frame& out) {
+    if (!is_open()) return ReadStatus::Error;
+    if (drained_) return ReadStatus::Eof;
 
     while (next_decoded_frame() == 1) {
         int64_t pts = frame_->best_effort_timestamp;
@@ -150,11 +198,12 @@ bool FFmpegFileSource::read(Frame& out) {
         last_timestamp_ = ts;
         first_frame_done_ = true;
 
-        // TODO(Phase 3): realtime_pacing 按 PTS 节奏等待
-        (void)realtime_pacing_;
-        return true;
+        // realtime pacing 在包装类 RealtimePacingSource 中实现
+        return ReadStatus::Frame;
     }
-    return false;  // 流结束（含 flush 完毕）
+    // 循环退出：last_error_ 仅在解码/读包错误路径被设置
+    if (!last_error_.empty()) return ReadStatus::Error;
+    return ReadStatus::Eof;
 }
 
 }  // namespace video

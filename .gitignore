@@ -23,3 +23,8 @@ logs/
 # 临时文件
 *.tmp
 ~$*
+
+# Large local video fixtures
+*.mkv
+*.mov
+

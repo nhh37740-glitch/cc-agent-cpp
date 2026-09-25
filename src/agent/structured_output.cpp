@@ -1,60 +1,44 @@
 #include "agent/structured_output.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 namespace agent {
 
-std::string extract_json_object(const std::string& text) {
-    // 找到第一个 '{'，然后按括号深度与字符串/转义状态找配对的 '}'
-    const size_t start = text.find('{');
-    if (start == std::string::npos) return "";
-    int depth = 0;
-    bool in_string = false, escaped = false;
-    for (size_t i = start; i < text.size(); ++i) {
-        const char c = text[i];
-        if (in_string) {
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (c == '"') {
-            in_string = true;
-        } else if (c == '{') {
-            ++depth;
-        } else if (c == '}') {
-            --depth;
-            if (depth == 0) return text.substr(start, i - start + 1);
-        }
-    }
-    return "";  // 括号不平衡
+namespace {
+
+std::string trim(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace((unsigned char)s[b])) ++b;
+    while (e > b && std::isspace((unsigned char)s[e - 1])) --e;
+    return s.substr(b, e - b);
 }
 
-ParsedOutput parse_model_output(const std::string& raw_text) {
-    ParsedOutput out;
+// 剥掉恰好一对完整的 Markdown 围栏；不是围栏形态时原样返回。
+std::string strip_code_fence(const std::string& s) {
+    if (s.rfind("```", 0) != 0) return s;  // 必须以 ``` 开头
+    size_t body_start = 3;
+    // 允许语言标注（如 ```json），到行尾为止
+    const size_t nl = s.find('\n', 3);
+    if (nl == std::string::npos) return s;
+    body_start = nl + 1;
+    // 必须以 ``` 结尾（允许尾随空白已由调用方去除）
+    if (s.compare(s.size() - 3, 3, "```") != 0) return s;
+    return trim(s.substr(body_start, s.size() - 3 - body_start));
+}
 
-    const std::string json_str = extract_json_object(raw_text);
-    if (json_str.empty()) {
-        out.error = "NO_JSON_OBJECT";
-        return out;
-    }
-
+ParsedOutput parse_single_object(const std::string& json_str, ParsedOutput& out) {
     nlohmann::json j;
     try {
-        j = nlohmann::json::parse(json_str);
+        j = nlohmann::json::parse(json_str);  // 要求全部输入被消费
     } catch (const std::exception&) {
-        out.error = "JSON_PARSE_ERROR";
+        out.error = "NOT_A_SINGLE_JSON_OBJECT";
         return out;
     }
-
     if (!j.is_object()) {
         out.error = "NOT_AN_OBJECT";
         return out;
     }
-
-    // type 字段必须存在且为字符串
     if (!j.contains("type") || !j["type"].is_string()) {
         out.error = "MISSING_OR_INVALID_TYPE";
         return out;
@@ -62,7 +46,6 @@ ParsedOutput parse_model_output(const std::string& raw_text) {
     const std::string type = j["type"].get<std::string>();
 
     if (type == "final") {
-        // 允许键：type、content
         for (auto it = j.begin(); it != j.end(); ++it) {
             if (it.key() != "type" && it.key() != "content") {
                 out.error = "UNKNOWN_FIELD:" + it.key();
@@ -79,7 +62,6 @@ ParsedOutput parse_model_output(const std::string& raw_text) {
     }
 
     if (type == "tool_call") {
-        // 允许键：type、name、arguments
         for (auto it = j.begin(); it != j.end(); ++it) {
             if (it.key() != "type" && it.key() != "name" && it.key() != "arguments") {
                 out.error = "UNKNOWN_FIELD:" + it.key();
@@ -102,6 +84,31 @@ ParsedOutput parse_model_output(const std::string& raw_text) {
 
     out.error = "UNKNOWN_TYPE:" + type;
     return out;
+}
+
+}  // namespace
+
+ParsedOutput parse_model_output(const std::string& raw_text) {
+    ParsedOutput out;
+
+    std::string text = trim(raw_text);
+    if (text.empty()) {
+        out.error = "EMPTY_OUTPUT";
+        return out;
+    }
+
+    // 唯一宽容项：完整输入恰为一对围栏，且围栏内恰好一个对象
+    if (text.rfind("```", 0) == 0) {
+        text = strip_code_fence(text);
+        if (text.empty() || text.rfind("```", 0) == 0 ||
+            text.compare(text.size() - 3, 3, "```") == 0) {
+            out.error = "MALFORMED_CODE_FENCE";
+            return out;
+        }
+        text = trim(text);
+    }
+
+    return parse_single_object(text, out);
 }
 
 }  // namespace agent

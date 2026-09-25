@@ -47,7 +47,6 @@ int main(int argc, char** argv) {
 
     // 消费者：慢速出队，故意让队列经常处于满状态
     std::jthread consumer([&](std::stop_token st) {
-        std::mt19937 rng(42);
         video::CandidateFrame c;
         while (!st.stop_requested() && q.pop(c, st)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -79,6 +78,8 @@ int main(int argc, char** argv) {
     q.close();
     consumer.request_stop();
     consumer.join();
+
+    CHECK(!stats.video_failed.load(), "视频源不应报错");
 
     const size_t end_mb = rss_mb();
     std::fprintf(stderr,

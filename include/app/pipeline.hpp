@@ -10,15 +10,17 @@
 #include <cstdint>
 #include <string>
 
-#include "agent/tool_registry.hpp"
 #include "filter/frame_filter.hpp"
 #include "log.hpp"
 #include "model/model.hpp"
 #include "queue/bounded_queue.hpp"
-#include "skill/skill_loader.hpp"
 #include "video/candidate_frame.hpp"
+#include "web/dashboard.hpp"
 
 namespace app {
+
+// 将视觉模型的事实描述规范为统一文本。只接受非空、非空场景的描述。
+bool normalize_visual_checklist(const std::string& content, std::string& normalized);
 
 struct PipelineConfig {
     std::string video_path;
@@ -31,11 +33,13 @@ struct PipelineConfig {
 };
 
 struct PipelineStats {
+    std::atomic<bool> video_failed{false};  // 视频源打开/读取失败（区别于正常 EOF）
     std::atomic<int64_t> frames_read{0};
     std::atomic<int64_t> frames_evaluated{0};
     std::atomic<int64_t> candidates_pushed{0};
     std::atomic<int64_t> candidates_dropped{0};  // 队列满被淘汰
     std::atomic<int64_t> candidates_analyzed{0};
+    std::atomic<int64_t> frames_pushed{0};
     std::atomic<int64_t> agent_finals{0};
     std::atomic<int64_t> agent_step_limits{0};
     std::atomic<double> vlm_latency_sum{0.0};
@@ -48,6 +52,7 @@ struct PipelineStats {
             {"candidates_pushed", candidates_pushed.load()},
             {"candidates_dropped", candidates_dropped.load()},
             {"candidates_analyzed", candidates_analyzed.load()},
+            {"frames_pushed", frames_pushed.load()},
             {"agent_finals", agent_finals.load()},
             {"agent_step_limits", agent_step_limits.load()},
             {"vlm_latency_avg_s",
@@ -65,14 +70,13 @@ void video_worker(std::stop_token st, const PipelineConfig& cfg,
                   PipelineStats& stats);
 
 struct VlmWorkerParams {
-    model::Model* model = nullptr;          // 由调用方加载并保证生命周期
-    skill::Skill skill;
-    agent::ToolRegistry* tools = nullptr;
+    model::Model* vision_model = nullptr;   // InternVL：做图像感知并生成描述
     logging::JsonlLogger* logger = nullptr;
     PipelineStats* stats = nullptr;
+    web::DashboardState* dashboard = nullptr;  // 可选：向远程面板发布帧与结果
 };
 
-// VLM/Agent 工作线程体：出队 → Agent Loop（含工具执行与回填）→ JSONL 日志。
+// VLM 工作线程体：出队 → 视觉描述 → 直接推送帧图片和文本到客户端。
 void vlm_worker(std::stop_token st, queue::BoundedQueue<video::CandidateFrame>& in_queue,
                 VlmWorkerParams params);
 

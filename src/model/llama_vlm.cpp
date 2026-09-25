@@ -9,6 +9,7 @@
 #include "llama.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "model/llama_backend.hpp"
 
 #include <stdexcept>
 #include <thread>
@@ -18,7 +19,7 @@ namespace model {
 static const char* kMediaMarker = "<__media__>";
 
 LlamaVLM::LlamaVLM(const VLMParams& params) : params_(params) {
-    llama_backend_init();
+    acquire_llama_backend();
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = params_.n_gpu_layers;
@@ -62,12 +63,16 @@ LlamaVLM::LlamaVLM(const VLMParams& params) : params_(params) {
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
     sparams.no_perf = true;
     sampler_ = llama_sampler_chain_init(sparams);
-    const int32_t n_vocab = llama_vocab_n_tokens(vocab_);
-    llama_sampler_chain_add(sampler_,
-        llama_sampler_init_penalties(n_vocab, 64, 1.1f, 0.0f, 0.0f));
-    llama_sampler_chain_add(sampler_, llama_sampler_init_top_p(0.9f, 1));
-    llama_sampler_chain_add(sampler_, llama_sampler_init_temp(params_.temp));
-    llama_sampler_chain_add(sampler_, llama_sampler_init_dist(params_.seed));
+    if (params_.temp <= 0.0f) {
+        llama_sampler_chain_add(sampler_, llama_sampler_init_greedy());
+    } else {
+        const int32_t n_vocab = llama_vocab_n_tokens(vocab_);
+        llama_sampler_chain_add(sampler_,
+            llama_sampler_init_penalties(n_vocab, 64, 1.1f, 0.0f, 0.0f));
+        llama_sampler_chain_add(sampler_, llama_sampler_init_top_p(0.9f, 1));
+        llama_sampler_chain_add(sampler_, llama_sampler_init_temp(params_.temp));
+        llama_sampler_chain_add(sampler_, llama_sampler_init_dist(params_.seed));
+    }
 
     ok_ = true;
 }
@@ -81,7 +86,7 @@ void LlamaVLM::unload() {
 
 LlamaVLM::~LlamaVLM() {
     unload();
-    llama_backend_free();
+    release_llama_backend();
 }
 
 static std::string role_tag(const Message& msg) {
@@ -111,8 +116,9 @@ ModelResponse LlamaVLM::generate(const std::vector<Message>& messages,
     prompt += "<|im_start|>assistant\n";
     const size_t n_images = rgb ? 1u : 0u;
 
-    // ---- 2. 清空 KV，重新开始本轮对话 ----
+    // ---- 2. 清空 KV 与 sampler 历史，保证每次生成为独立对话 ----
     llama_memory_clear(llama_get_memory(ctx_), true);
+    llama_sampler_reset(sampler_);  // penalties 等采样器的 recent-token 状态不跨生成残留
 
     mtmd_input_chunks* chunks = mtmd_input_chunks_init();
     mtmd_bitmap* bitmap = nullptr;

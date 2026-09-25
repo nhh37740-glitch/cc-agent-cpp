@@ -17,7 +17,9 @@ static int failures = 0;
 #define CHECK(cond, msg)                                                  \
     do {                                                                  \
         if (!(cond)) {                                                    \
-            std::fprintf(stderr, "[FAIL] %s (line %d)\n", msg, __LINE__); \
+            const std::string check_message = (msg);                      \
+            std::fprintf(stderr, "[FAIL] %s (line %d)\n",                \
+                         check_message.c_str(), __LINE__);                \
             ++failures;                                                   \
         }                                                                 \
     } while (0)
@@ -50,7 +52,7 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> rgb;
     int tested = 0;
     for (int i = 0; i < 3; ++i) {
-        if (!source.read(f)) break;
+        if (source.read(f) != video::ReadStatus::Frame) break;
         if (!video::convert_to_rgb(f, rgb)) {
             std::fprintf(stderr, "[FAIL] RGB 转换失败\n");
             return 1;

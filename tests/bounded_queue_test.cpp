@@ -24,6 +24,17 @@ static int failures = 0;
 int main() {
     using queue::BoundedQueue;
 
+    // ---- 0) 零容量构造必须失败（R-021）----
+    {
+        bool threw = false;
+        try {
+            BoundedQueue<int> q(0);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        CHECK(threw, "容量 0 构造应抛出 invalid_argument");
+    }
+
     // ---- 1) 容量与 drop_oldest 顺序 ----
     {
         BoundedQueue<int> q(4);

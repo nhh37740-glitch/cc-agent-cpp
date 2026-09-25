@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
         video::FFmpegFileSource source(argv[2]);
         video::Frame f;
         int64_t candidates = 0;
-        while (source.read(f)) {
+        while (source.read(f) == video::ReadStatus::Frame) {
             if (filter.analyze(f).should_analyze) ++candidates;
         }
         std::fprintf(stderr, "static: candidates=%lld\n", (long long)candidates);
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
         video::FFmpegFileSource source(argv[1]);
         video::Frame f;
         int64_t frames = 0, candidates = 0, evaluated = 0;
-        while (source.read(f)) {
+        while (source.read(f) == video::ReadStatus::Frame) {
             ++frames;
             auto r = filter.analyze(f);
             if (r.was_evaluated) ++evaluated;

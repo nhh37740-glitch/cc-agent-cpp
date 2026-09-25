@@ -25,6 +25,9 @@ enum class AgentStatus {
 
 struct Observation {
     std::string system_prompt;
+    // 可选：由无工具视觉感知阶段产生的事实描述。非空时 Agent 只读取该文本，
+    // 不再次查看图像，避免动作提示反向诱导视觉幻觉。
+    std::string visual_description;
     double frame_timestamp = 0.0;
     float change_score = 0.0f;
 

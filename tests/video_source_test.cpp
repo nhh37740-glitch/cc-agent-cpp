@@ -26,15 +26,24 @@ int main(int argc, char** argv) {
     }
     const std::string path = argv[1];
 
+    // 错误路径：不存在的文件必须报 Error，而不是正常 EOF
+    {
+        video::FFmpegFileSource bad("this-file-does-not-exist.mp4");
+        CHECK(!bad.is_open(), "不存在的文件不应打开成功");
+        Frame f;
+        CHECK(bad.read(f) == video::ReadStatus::Error, "打开失败应返回 Error");
+        CHECK(!bad.last_error().empty(), "应提供诊断信息");
+    }
+
     // 第一遍：完整读取
     double first_ts = -1.0, last_ts = -1.0;
     int64_t count = 0;
     bool monotonic = true;
     {
         FFmpegFileSource source(path.c_str());
-        CHECK(source.fps() > 20.0 && source.fps() < 40.0, "fps 应约为 30");
+        CHECK(source.is_open(), "fixture 应能正常打开");
         Frame f;
-        while (source.read(f)) {
+        while (source.read(f) == video::ReadStatus::Frame) {
             if (count > 0 && !(f.timestamp > last_ts)) monotonic = false;
             if (count == 0) first_ts = f.timestamp;
             last_ts = f.timestamp;
@@ -48,12 +57,21 @@ int main(int argc, char** argv) {
     CHECK(first_ts >= 0.0 && first_ts < 0.2, "首帧 PTS 接近 0");
     CHECK(last_ts > 5.4 && last_ts <= 6.5, "末帧 PTS 接近视频时长 6s");
 
+    // EOF 后再读：稳定返回 Eof（不误报 Error）
+    {
+        FFmpegFileSource source(path.c_str());
+        Frame f;
+        while (source.read(f) == video::ReadStatus::Frame) {}
+        CHECK(source.read(f) == video::ReadStatus::Eof, "EOF 后应稳定返回 Eof");
+        CHECK(source.last_error().empty(), "正常 EOF 不应产生错误信息");
+    }
+
     // 第二遍：重新打开，验证资源释放后可重复读取
     {
         FFmpegFileSource source(path.c_str());
         Frame f;
         int64_t second = 0;
-        while (source.read(f)) ++second;
+        while (source.read(f) == video::ReadStatus::Frame) ++second;
         CHECK(second == count, "重开后应读到相同帧数（资源释放正常）");
     }
 

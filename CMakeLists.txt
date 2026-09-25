@@ -41,11 +41,24 @@ foreach(lib avcodec avformat swscale avutil)
     endif()
 endforeach()
 
+# 运行期 DLL 必须齐全（缺 DLL 会导致链接出的程序无法启动，不允许静默跳过复制）
+set(EDGE_FFMPEG_REQUIRED_DLLS
+    avcodec-63.dll avformat-63.dll avutil-61.dll swscale-10.dll swresample-7.dll)
+foreach(dll IN LISTS EDGE_FFMPEG_REQUIRED_DLLS)
+    find_file("FFMPEG_DLL_${dll}"
+        NAMES ${dll}
+        HINTS "${FFMPEG_ROOT}/bin"
+        NO_DEFAULT_PATH)
+    if(NOT FFMPEG_DLL_${dll})
+        list(APPEND _FFMPEG_MISSING "bin/${dll}")
+    endif()
+endforeach()
+
 if(NOT FFMPEG_INCLUDE_DIR OR _FFMPEG_MISSING)
     message(FATAL_ERROR
         "FFmpeg 依赖缺失。期望版本：ffmpeg-9.0.1-full_build-shared（gyan.dev）。\n"
-        "期望位置：${FFMPEG_ROOT}（需要 include/ 与 lib/ 子目录，含 avcodec.lib、avformat.lib、swscale.lib、avutil.lib 导入库）。\n"
-        "缺失项：头文件=${FFMPEG_INCLUDE_DIR}；导入库=[${_FFMPEG_MISSING}]\n"
+        "期望位置：${FFMPEG_ROOT}（需要 include/、lib/ 导入库与 bin/ 运行 DLL）。\n"
+        "缺失项：头文件=${FFMPEG_INCLUDE_DIR}；库与 DLL=[${_FFMPEG_MISSING}]\n"
         "恢复步骤：按《依赖接入决策.md》下载 "
         "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-full_build-shared.7z "
         "(SHA-256 cb4d5e8db6a3353bffdb2100d3eb4b76733457fa443215e236f57c99f9ffdca4)，"
@@ -57,11 +70,21 @@ foreach(lib avcodec avformat swscale avutil)
     message(STATUS "FFmpeg ${lib}: ${FFMPEG_${lib}_LIBRARY}")
 endforeach()
 
+# 导入库与运行 DLL 的对应关系（gyan.dev ffmpeg-9.0.1 命名）
+set(EDGE_FFMPEG_LIB_TO_DLL
+    avcodec avcodec-63.dll
+    avformat avformat-63.dll
+    swscale swscale-10.dll
+    avutil avutil-61.dll)
+
 foreach(lib avcodec avformat swscale avutil)
     add_library(ffmpeg::${lib} SHARED IMPORTED GLOBAL)
+    list(FIND EDGE_FFMPEG_LIB_TO_DLL "${lib}" _idx)
+    math(EXPR _dll_idx "${_idx} + 1")
+    list(GET EDGE_FFMPEG_LIB_TO_DLL ${_dll_idx} _dll_name)
     set_target_properties(ffmpeg::${lib} PROPERTIES
         IMPORTED_IMPLIB   "${FFMPEG_${lib}_LIBRARY}"
-        IMPORTED_LOCATION "${FFMPEG_ROOT}/bin")
+        IMPORTED_LOCATION "${FFMPEG_DLL_${_dll_name}}")  # 指向实际 DLL 文件
 endforeach()
 add_library(ffmpeg::headers INTERFACE IMPORTED GLOBAL)
 set_target_properties(ffmpeg::headers PROPERTIES
@@ -105,9 +128,25 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET RESULT_VARIABLE _LLAMA_REV_RESULT)
 
-if(_LLAMA_REV_RESULT EQUAL 0 AND NOT LLAMA_HEAD_COMMIT STREQUAL "c1d0e7a004015f23bc0233470b747b596f29b264")
+string(STRIP "${LLAMA_HEAD_COMMIT}" LLAMA_HEAD_COMMIT)
+if(_LLAMA_REV_RESULT EQUAL 0)
+    string(LENGTH "${LLAMA_HEAD_COMMIT}" _LLAMA_COMMIT_LEN)
+endif()
+
+# git 不可用、rev-parse 失败或输出不是 40 位 commit：一律 FATAL_ERROR，不静默继续
+if(NOT _LLAMA_REV_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "llama.cpp HEAD 为 ${LLAMA_HEAD_COMMIT}，与锁定的 v0.3.0 commit 不符。\n"
+        "无法校验 llama.cpp submodule 的 commit（git 命令执行失败，"
+        "result=${_LLAMA_REV_RESULT}）。\n"
+        "期望 commit：c1d0e7a004015f23bc0233470b747b596f29b264（tag v0.3.0）\n"
+        "期望位置：${LLAMA_DIR}\n"
+        "恢复步骤：确认 git 可用后执行 git -C third_party/llama.cpp checkout "
+        "c1d0e7a004015f23bc0233470b747b596f29b264")
+endif()
+if(NOT LLAMA_HEAD_COMMIT STREQUAL "c1d0e7a004015f23bc0233470b747b596f29b264")
+    message(FATAL_ERROR
+        "llama.cpp HEAD 为 ${LLAMA_HEAD_COMMIT}（长度 ${_LLAMA_COMMIT_LEN}），"
+        "与锁定的 v0.3.0 commit 不符。\n"
         "恢复步骤：git -C third_party/llama.cpp checkout "
         "c1d0e7a004015f23bc0233470b747b596f29b264")
 endif()
