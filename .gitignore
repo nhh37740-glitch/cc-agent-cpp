@@ -2,6 +2,8 @@
 build/
 build-*/
 out/
+dist/
+package-stage/
 *.obj
 *.pdb
 

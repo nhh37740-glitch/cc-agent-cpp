@@ -7,6 +7,10 @@
 
 ## 架构
 
+静态库按模块拆分、依赖方向和 Windows 交付流程见
+[`docs/MODULES.md`](docs/MODULES.md)。`edge_agent.exe` 是发布二进制，
+`edge_core` 保留为测试与下游调用的兼容聚合目标。
+
 ```
 本地 MP4（模拟实时摄像头，按 PTS 单向读取，不 seek）
         ↓  Video Worker (jthread A)
@@ -99,6 +103,40 @@ ctest --test-dir build -C Release --output-on-failure
 输入的安全失败、ToolRegistry 白名单与失败路径注入、Agent Loop 成功/失败/拒绝/
 步数上限语义（MockModel），以及真实模型单图推理、Skill 行为切换、长时间运行
 内存稳定性。
+
+## Jenkins 与 Windows Docker 交付
+
+`Jenkinsfile` 面向带 MSVC、CMake、FFmpeg 依赖和 Windows Docker 的 Jenkins agent，
+标签为 `edge-windows`。流水线依次检查模块边界、构建并运行 CTest、生成版本化 ZIP
+与 SHA-256 清单，再构建 Windows runtime 镜像。可在本机执行同一检查和打包步骤：
+
+```powershell
+python scripts/check_module_boundaries.py
+cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --config Release --parallel 2
+ctest --test-dir build -C Release --output-on-failure
+scripts/package-windows-release.ps1
+docker build -f Dockerfile.windows.runtime -t cc-agent-cpp:local .
+```
+
+模型权重和输入视频不放进 Git 或发布 ZIP。运行时挂载它们并把只读面板限制在
+本机回环地址；容器需在 Windows Docker 主机运行：
+
+```powershell
+docker run --rm -p 127.0.0.1:18082:8080 `
+  --mount "type=bind,source=$((Resolve-Path .\models).Path),target=C:\app\models,readonly" `
+  --mount "type=bind,source=$((Resolve-Path .\sample.mp4).Path),target=C:\data\sample.mp4,readonly" `
+  cc-agent-cpp:local `
+  --video C:\data\sample.mp4 `
+  --model C:\app\models\InternVL3-1B-Instruct-Q8_0.gguf `
+  --mmproj C:\app\models\mmproj-InternVL3-1B-Instruct-Q8_0.gguf `
+  --decision-model C:\app\models\qwen2.5-1.5b-instruct-q4_k_m.gguf `
+  --skill C:\app\skills\door-camera.md `
+  --web-port 8080 --web-bind 0.0.0.0 --unattended
+```
+
+该 C++ 项目目前只支持 Windows；Ubuntu 演示机不能构建或运行此 Windows 容器。
+Jenkins Windows agent 尚需单独接入后，Windows 流水线才可执行。
 
 ## 运行演示
 

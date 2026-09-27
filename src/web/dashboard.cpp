@@ -63,7 +63,8 @@ h1{font-size:20px;margin:0}.pill{padding:6px 12px;border-radius:999px;background
 </div>
 <script>
 let last='',activeId=0;
-const esc=v=>v==null?'':String(v);
+// 模型输出属于不可信文本；插入 innerHTML 前必须转义。
+const esc=v=>v==null?'':String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const stateText={starting:'正在启动',running:'正在运行',complete:'处理完成',failed:'运行失败',pushed:'已推送',final:'无需推送',step_limit_reached:'达到步骤上限'};
 async function refresh(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error(r.status);const s=await r.json();
 document.querySelector('#state').textContent=stateText[s.run_state]||'未知';
