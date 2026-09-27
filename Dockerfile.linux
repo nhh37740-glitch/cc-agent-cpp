@@ -1,0 +1,49 @@
+FROM ubuntu:24.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates cmake ffmpeg git ninja-build pkg-config python3 \
+      libavformat-dev libavcodec-dev libswscale-dev libavutil-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+ARG BUILD_JOBS=1
+ARG PACKAGE_VERSION=0.1.0
+ARG SOURCE_COMMIT=unknown
+ARG SOURCE_TREE=unknown
+
+RUN python3 scripts/check_module_boundaries.py
+RUN cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
+      -DEDGE_SOURCE_COMMIT="${SOURCE_COMMIT}" \
+      -DEDGE_SOURCE_TREE="${SOURCE_TREE}"
+RUN cmake --build build --parallel "${BUILD_JOBS}"
+RUN ctest --test-dir build --output-on-failure --parallel 1
+RUN python3 scripts/package_linux_release.py \
+      --version "${PACKAGE_VERSION}" \
+      --source-commit "${SOURCE_COMMIT}" \
+      --source-tree "${SOURCE_TREE}"
+
+FROM ubuntu:24.04 AS runtime
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libavformat60 libavcodec60 libavutil58 libswscale7 libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 edge \
+    && mkdir -p /workspace/logs /opt/edge-agent/skills \
+      /opt/edge-agent/licenses/llama.cpp /opt/edge-agent/docs \
+    && chown -R edge:edge /workspace /opt/edge-agent
+
+WORKDIR /workspace
+COPY --from=build --chown=edge:edge /src/build/src/edge_agent /usr/local/bin/edge_agent
+COPY --from=build --chown=edge:edge /src/skills/ /opt/edge-agent/skills/
+COPY --from=build --chown=edge:edge /src/README.md /opt/edge-agent/README.md
+COPY --from=build --chown=edge:edge /src/third_party/llama.cpp/LICENSE /opt/edge-agent/licenses/llama.cpp/LICENSE
+COPY --from=build --chown=edge:edge /src/docs/THIRD_PARTY_NOTICES.md /opt/edge-agent/docs/THIRD_PARTY_NOTICES.md
+USER edge
+ENTRYPOINT ["/usr/local/bin/edge_agent"]
+CMD ["--help"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD kill -0 1

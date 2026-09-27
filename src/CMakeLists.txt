@@ -37,7 +37,10 @@ target_link_libraries(edge_agent_core PUBLIC edge_model edge_skill nlohmann_json
 
 add_library(edge_dashboard STATIC web/dashboard.cpp)
 edge_configure_module(edge_dashboard)
-target_link_libraries(edge_dashboard PUBLIC edge_agent_core edge_video ws2_32)
+target_link_libraries(edge_dashboard PUBLIC edge_agent_core edge_video Threads::Threads)
+if(WIN32)
+    target_link_libraries(edge_dashboard PUBLIC ws2_32)
+endif()
 
 add_library(edge_pipeline STATIC app/pipeline.cpp)
 edge_configure_module(edge_pipeline)

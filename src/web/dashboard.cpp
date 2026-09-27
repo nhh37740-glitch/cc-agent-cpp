@@ -1,8 +1,20 @@
 #include "web/dashboard.hpp"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+using SocketHandle = SOCKET;
+using SocketLength = int;
+constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
+#else
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+using SocketHandle = int;
+using SocketLength = socklen_t;
+constexpr SocketHandle kInvalidSocket = -1;
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -16,6 +28,30 @@
 namespace web {
 
 namespace {
+
+void close_socket(SocketHandle socket) {
+#if defined(_WIN32)
+    closesocket(socket);
+#else
+    close(socket);
+#endif
+}
+
+void shutdown_socket(SocketHandle socket) {
+#if defined(_WIN32)
+    shutdown(socket, SD_BOTH);
+#else
+    shutdown(socket, SHUT_RDWR);
+#endif
+}
+
+int send_flags() {
+#if defined(_WIN32)
+    return 0;
+#else
+    return MSG_NOSIGNAL;
+#endif
+}
 
 void append_u16(std::vector<uint8_t>& out, uint16_t v) {
     out.push_back(static_cast<uint8_t>(v));
@@ -94,9 +130,15 @@ refresh();setInterval(refresh,1000);
 </script></body></html>)HTML";
 }
 
-bool send_all(SOCKET socket, const char* data, std::size_t size) {
+bool send_all(SocketHandle socket, const char* data, std::size_t size) {
     while (size > 0) {
-        const int chunk = send(socket, data, static_cast<int>(std::min<std::size_t>(size, 1 << 20)), 0);
+#if defined(_WIN32)
+        const int chunk = send(socket, data,
+            static_cast<int>(std::min<std::size_t>(size, 1 << 20)), send_flags());
+#else
+        const auto chunk = send(socket, data,
+            std::min<std::size_t>(size, 1 << 20), send_flags());
+#endif
         if (chunk <= 0) return false;
         data += chunk;
         size -= static_cast<std::size_t>(chunk);
@@ -104,7 +146,7 @@ bool send_all(SOCKET socket, const char* data, std::size_t size) {
     return true;
 }
 
-void send_response(SOCKET socket, int status, const char* status_text,
+void send_response(SocketHandle socket, int status, const char* status_text,
                    const char* content_type, const uint8_t* body, std::size_t body_size) {
     std::ostringstream headers;
     headers << "HTTP/1.1 " << status << ' ' << status_text << "\r\n"
@@ -118,7 +160,7 @@ void send_response(SOCKET socket, int status, const char* status_text,
     if (body_size) send_all(socket, reinterpret_cast<const char*>(body), body_size);
 }
 
-void send_text(SOCKET socket, int status, const char* status_text,
+void send_text(SocketHandle socket, int status, const char* status_text,
                const char* content_type, const std::string& body) {
     send_response(socket, status, status_text, content_type,
                   reinterpret_cast<const uint8_t*>(body.data()), body.size());
@@ -255,13 +297,15 @@ bool DashboardState::frame_bmp(uint64_t id, std::vector<uint8_t>& out) const {
 struct DashboardServer::Impl {
     DashboardConfig config;
     DashboardState& state;
-    std::atomic<SOCKET> listener{INVALID_SOCKET};
+    std::atomic<SocketHandle> listener{kInvalidSocket};
     std::jthread thread;
+#if defined(_WIN32)
     bool winsock_started = false;
+#endif
 
     Impl(DashboardConfig c, DashboardState& s) : config(std::move(c)), state(s) {}
 
-    void handle(SOCKET client) {
+    void handle(SocketHandle client) {
         char request[8192];
         const int n = recv(client, request, sizeof(request) - 1, 0);
         if (n <= 0) return;
@@ -298,32 +342,40 @@ DashboardServer::~DashboardServer() { stop(); delete impl_; }
 
 bool DashboardServer::start(std::string& error) {
     if (impl_->config.port == 0) return true;
+#if defined(_WIN32)
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { error = "WSAStartup 失败"; return false; }
     impl_->winsock_started = true;
+#endif
     addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM; hints.ai_protocol = IPPROTO_TCP;
     addrinfo* addresses = nullptr;
     const std::string port = std::to_string(impl_->config.port);
     if (getaddrinfo(impl_->config.bind_address.c_str(), port.c_str(), &hints, &addresses) != 0) {
         error = "无法解析 Web bind 地址: " + impl_->config.bind_address; stop(); return false;
     }
-    SOCKET listener = socket(addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
-    if (listener == INVALID_SOCKET) { freeaddrinfo(addresses); error = "创建 Web socket 失败"; stop(); return false; }
-    BOOL reuse = TRUE; setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
-    if (bind(listener, addresses->ai_addr, static_cast<int>(addresses->ai_addrlen)) == SOCKET_ERROR ||
-        listen(listener, 16) == SOCKET_ERROR) {
-        freeaddrinfo(addresses); closesocket(listener); error = "Web 端口绑定/监听失败: " + display_url(); stop(); return false;
+    SocketHandle listener = socket(addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
+    if (listener == kInvalidSocket) { freeaddrinfo(addresses); error = "创建 Web socket 失败"; stop(); return false; }
+#if defined(_WIN32)
+    BOOL reuse = TRUE;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+#else
+    int reuse = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+    if (bind(listener, addresses->ai_addr, static_cast<SocketLength>(addresses->ai_addrlen)) != 0 ||
+        listen(listener, 16) != 0) {
+        freeaddrinfo(addresses); close_socket(listener); error = "Web 端口绑定/监听失败: " + display_url(); stop(); return false;
     }
     freeaddrinfo(addresses);
     impl_->listener.store(listener);
     impl_->thread = std::jthread([this](std::stop_token st) {
         while (!st.stop_requested()) {
-            SOCKET current = impl_->listener.load();
-            if (current == INVALID_SOCKET) break;
-            SOCKET client = accept(current, nullptr, nullptr);
-            if (client == INVALID_SOCKET) { if (st.stop_requested()) break; continue; }
+            SocketHandle current = impl_->listener.load();
+            if (current == kInvalidSocket) break;
+            SocketHandle client = accept(current, nullptr, nullptr);
+            if (client == kInvalidSocket) { if (st.stop_requested()) break; continue; }
             impl_->handle(client);
-            shutdown(client, SD_BOTH); closesocket(client);
+            shutdown_socket(client); close_socket(client);
         }
     });
     return true;
@@ -332,13 +384,18 @@ bool DashboardServer::start(std::string& error) {
 void DashboardServer::stop() {
     if (!impl_) return;
     if (impl_->thread.joinable()) impl_->thread.request_stop();
-    const SOCKET listener = impl_->listener.exchange(INVALID_SOCKET);
-    if (listener != INVALID_SOCKET) { shutdown(listener, SD_BOTH); closesocket(listener); }
+    const SocketHandle listener = impl_->listener.exchange(kInvalidSocket);
+    if (listener != kInvalidSocket) { shutdown_socket(listener); close_socket(listener); }
     if (impl_->thread.joinable()) impl_->thread.join();
-    if (impl_->winsock_started) { WSACleanup(); impl_->winsock_started = false; }
+#if defined(_WIN32)
+    if (impl_->winsock_started) {
+        WSACleanup();
+        impl_->winsock_started = false;
+    }
+#endif
 }
 
-bool DashboardServer::running() const { return impl_ && impl_->listener.load() != INVALID_SOCKET; }
+bool DashboardServer::running() const { return impl_ && impl_->listener.load() != kInvalidSocket; }
 
 std::string DashboardServer::display_url() const {
     const std::string host = impl_->config.bind_address == "0.0.0.0" ? "<本机局域网IP>" : impl_->config.bind_address;

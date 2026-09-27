@@ -1,10 +1,12 @@
 # 边缘多模态 Agent（MVP）
 # 依赖接入遵循《依赖接入决策.md》：llama.cpp submodule 固定 v0.3.0；
-# FFmpeg 使用 gyan.dev ffmpeg-9.0.1-full_build-shared 解压到 third_party/ffmpeg。
+# Windows FFmpeg 使用锁定的 gyan.dev shared 构建；Linux 在 Ubuntu 24.04
+# build image 中通过 pkg-config 使用系统 FFmpeg 开发包。
 # 任何依赖缺失必须 FATAL_ERROR，禁止静默回退。
 
 cmake_minimum_required(VERSION 3.24)
 project(edge_agent LANGUAGES CXX)
+find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,96 +18,102 @@ if(MSVC)
     add_compile_options(/utf-8 /Zc:__cplusplus)
 endif()
 
-if(NOT WIN32)
-    message(FATAL_ERROR "本项目当前仅在 Windows 上构建与验收")
+if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "本项目支持 Windows 与 Linux；当前平台为 ${CMAKE_SYSTEM_NAME}")
 endif()
 
 # ---------------------------------------------------------------------------
-# FFmpeg（gyan.dev shared 构建导入）
+# FFmpeg：Windows 使用锁定的 gyan.dev shared 构建；Linux 使用发行版开发包。
 # ---------------------------------------------------------------------------
-set(FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg")
-
-find_path(FFMPEG_INCLUDE_DIR
-    NAMES libavformat/avformat.h
-    HINTS "${FFMPEG_ROOT}/include"
-    NO_DEFAULT_PATH)
-
-set(_FFMPEG_MISSING "")
-foreach(lib avcodec avformat swscale avutil)
-    find_library(FFMPEG_${lib}_LIBRARY
-        NAMES ${lib}
-        HINTS "${FFMPEG_ROOT}/lib"
-        NO_DEFAULT_PATH)
-    if(NOT FFMPEG_${lib}_LIBRARY)
-        list(APPEND _FFMPEG_MISSING "${lib}")
+if(WIN32)
+    set(FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg")
+    find_path(FFMPEG_INCLUDE_DIR NAMES libavformat/avformat.h
+        HINTS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH)
+    set(_FFMPEG_MISSING "")
+    foreach(lib avcodec avformat swscale avutil)
+        find_library(FFMPEG_${lib}_LIBRARY NAMES ${lib}
+            HINTS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+        if(NOT FFMPEG_${lib}_LIBRARY)
+            list(APPEND _FFMPEG_MISSING "${lib}")
+        endif()
+    endforeach()
+    set(EDGE_FFMPEG_REQUIRED_DLLS
+        avcodec-63.dll avformat-63.dll avutil-61.dll swscale-10.dll swresample-7.dll)
+    foreach(dll IN LISTS EDGE_FFMPEG_REQUIRED_DLLS)
+        find_file("FFMPEG_DLL_${dll}" NAMES ${dll}
+            HINTS "${FFMPEG_ROOT}/bin" NO_DEFAULT_PATH)
+        if(NOT FFMPEG_DLL_${dll})
+            list(APPEND _FFMPEG_MISSING "bin/${dll}")
+        endif()
+    endforeach()
+    if(NOT FFMPEG_INCLUDE_DIR OR _FFMPEG_MISSING)
+        message(FATAL_ERROR
+            "Windows FFmpeg dependency missing. Expected gyan.dev ffmpeg-9.0.1-full_build-shared.\n"
+            "Expected location: ${FFMPEG_ROOT}; missing headers=${FFMPEG_INCLUDE_DIR}, libraries/DLLs=[${_FFMPEG_MISSING}].\n"
+            "See 依赖接入决策.md for the pinned download URL, SHA-256, and restore steps.")
     endif()
-endforeach()
-
-# 运行期 DLL 必须齐全（缺 DLL 会导致链接出的程序无法启动，不允许静默跳过复制）
-set(EDGE_FFMPEG_REQUIRED_DLLS
-    avcodec-63.dll avformat-63.dll avutil-61.dll swscale-10.dll swresample-7.dll)
-foreach(dll IN LISTS EDGE_FFMPEG_REQUIRED_DLLS)
-    find_file("FFMPEG_DLL_${dll}"
-        NAMES ${dll}
-        HINTS "${FFMPEG_ROOT}/bin"
-        NO_DEFAULT_PATH)
-    if(NOT FFMPEG_DLL_${dll})
-        list(APPEND _FFMPEG_MISSING "bin/${dll}")
+    set(EDGE_FFMPEG_LIB_TO_DLL avcodec avcodec-63.dll avformat avformat-63.dll
+        swscale swscale-10.dll avutil avutil-61.dll)
+    foreach(lib avcodec avformat swscale avutil)
+        add_library(ffmpeg::${lib} SHARED IMPORTED GLOBAL)
+        list(FIND EDGE_FFMPEG_LIB_TO_DLL "${lib}" _idx)
+        math(EXPR _dll_idx "${_idx} + 1")
+        list(GET EDGE_FFMPEG_LIB_TO_DLL ${_dll_idx} _dll_name)
+        set_target_properties(ffmpeg::${lib} PROPERTIES
+            IMPORTED_IMPLIB "${FFMPEG_${lib}_LIBRARY}"
+            IMPORTED_LOCATION "${FFMPEG_ROOT}/bin/${_dll_name}")
+    endforeach()
+    add_library(ffmpeg::headers INTERFACE IMPORTED GLOBAL)
+    set_target_properties(ffmpeg::headers PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}")
+    file(GLOB EDGE_FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
+    set(FFMPEG_EXE "${FFMPEG_ROOT}/bin/ffmpeg.exe")
+else()
+    find_package(PkgConfig QUIET)
+    if(NOT PkgConfig_FOUND)
+        message(FATAL_ERROR
+            "Linux FFmpeg discovery requires pkg-config. Install pkg-config and the FFmpeg development packages "
+            "(libavformat-dev, libavcodec-dev, libswscale-dev, libavutil-dev), then reconfigure.")
     endif()
-endforeach()
-
-if(NOT FFMPEG_INCLUDE_DIR OR _FFMPEG_MISSING)
-    message(FATAL_ERROR
-        "FFmpeg 依赖缺失。期望版本：ffmpeg-9.0.1-full_build-shared（gyan.dev）。\n"
-        "期望位置：${FFMPEG_ROOT}（需要 include/、lib/ 导入库与 bin/ 运行 DLL）。\n"
-        "缺失项：头文件=${FFMPEG_INCLUDE_DIR}；库与 DLL=[${_FFMPEG_MISSING}]\n"
-        "恢复步骤：按《依赖接入决策.md》下载 "
-        "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-full_build-shared.7z "
-        "(SHA-256 cb4d5e8db6a3353bffdb2100d3eb4b76733457fa443215e236f57c99f9ffdca4)，"
-        "解压后把其中的 include/、lib/、bin/ 复制到 third_party/ffmpeg/ 下。")
+    set(_FFMPEG_MISSING "")
+    foreach(component avformat avcodec swscale avutil)
+        pkg_check_modules(FFMPEG_${component} QUIET IMPORTED_TARGET "lib${component}")
+        if(NOT FFMPEG_${component}_FOUND)
+            list(APPEND _FFMPEG_MISSING "lib${component}")
+        endif()
+    endforeach()
+    if(_FFMPEG_MISSING)
+        message(FATAL_ERROR
+            "Linux FFmpeg development dependencies are missing: ${_FFMPEG_MISSING}. "
+            "Install pkg-config, libavformat-dev, libavcodec-dev, libswscale-dev, and libavutil-dev.")
+    endif()
+    foreach(component avformat avcodec swscale avutil)
+        add_library(ffmpeg::${component} INTERFACE IMPORTED GLOBAL)
+        set_target_properties(ffmpeg::${component} PROPERTIES
+            INTERFACE_LINK_LIBRARIES "PkgConfig::FFMPEG_${component}")
+    endforeach()
+    add_library(ffmpeg::headers INTERFACE IMPORTED GLOBAL)
+    set_target_properties(ffmpeg::headers PROPERTIES
+        INTERFACE_LINK_LIBRARIES "PkgConfig::FFMPEG_avformat")
+    find_program(FFMPEG_EXE NAMES ffmpeg)
+    if(NOT FFMPEG_EXE)
+        message(FATAL_ERROR
+            "Linux FFmpeg executable is required to generate CTest video fixtures. "
+            "Install the ffmpeg package and reconfigure.")
+    endif()
 endif()
-
-message(STATUS "FFmpeg 头文件: ${FFMPEG_INCLUDE_DIR}")
-foreach(lib avcodec avformat swscale avutil)
-    message(STATUS "FFmpeg ${lib}: ${FFMPEG_${lib}_LIBRARY}")
-endforeach()
-
-# 导入库与运行 DLL 的对应关系（gyan.dev ffmpeg-9.0.1 命名）
-set(EDGE_FFMPEG_LIB_TO_DLL
-    avcodec avcodec-63.dll
-    avformat avformat-63.dll
-    swscale swscale-10.dll
-    avutil avutil-61.dll)
-
-foreach(lib avcodec avformat swscale avutil)
-    add_library(ffmpeg::${lib} SHARED IMPORTED GLOBAL)
-    list(FIND EDGE_FFMPEG_LIB_TO_DLL "${lib}" _idx)
-    math(EXPR _dll_idx "${_idx} + 1")
-    list(GET EDGE_FFMPEG_LIB_TO_DLL ${_dll_idx} _dll_name)
-    set_target_properties(ffmpeg::${lib} PROPERTIES
-        IMPORTED_IMPLIB   "${FFMPEG_${lib}_LIBRARY}"
-        IMPORTED_LOCATION "${FFMPEG_DLL_${_dll_name}}")  # 指向实际 DLL 文件
-endforeach()
-add_library(ffmpeg::headers INTERFACE IMPORTED GLOBAL)
-set_target_properties(ffmpeg::headers PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}")
-
-# 运行期 DLL 一律复制到可执行文件输出目录，不依赖 PATH。
-file(GLOB EDGE_FFMPEG_DLLS "${FFMPEG_ROOT}/bin/*.dll")
 
 function(edge_copy_runtime_dlls TARGET_NAME)
-    # FFmpeg 运行 DLL
-    if(EDGE_FFMPEG_DLLS)
+    if(WIN32)
         foreach(dll ${EDGE_FFMPEG_DLLS})
             add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" $<TARGET_FILE_DIR:${TARGET_NAME}>)
         endforeach()
+        add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:${TARGET_NAME}> $<TARGET_FILE_DIR:${TARGET_NAME}>
+            COMMAND_EXPAND_LISTS)
     endif()
-    # llama/ggml/mtmd 等共享运行库
-    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:${TARGET_NAME}> $<TARGET_FILE_DIR:${TARGET_NAME}>
-        COMMAND_EXPAND_LISTS)
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -152,13 +160,22 @@ if(NOT LLAMA_HEAD_COMMIT STREQUAL "c1d0e7a004015f23bc0233470b747b596f29b264")
 endif()
 
 set(LLAMA_BUILD_COMMON  OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS   ON  CACHE BOOL "" FORCE) # llama/ggml/mtmd 构建为 DLL，经 TARGET_RUNTIME_DLLS 复制
+if(WIN32)
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) # Windows 运行 DLL 经 TARGET_RUNTIME_DLLS 复制
+else()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE) # Linux 静态链接 llama/ggml，简化二进制交付
+endif()
 set(LLAMA_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER  OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_APP     OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_MTMD    ON  CACHE BOOL "" FORCE) # 独立构建 tools/mtmd 库
+if(NOT WIN32)
+    set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+    set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+    set(GGML_NATIVE OFF CACHE BOOL "" FORCE) # 发布二进制不绑定构建机的 CPU 指令集
+endif()
 set(LLAMA_LLGUIDANCE    OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LLAMA_DIR}" llama.cpp-build EXCLUDE_FROM_ALL)
 

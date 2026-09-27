@@ -21,7 +21,7 @@ DEPENDENCIES = {
     "edge_model": [],
     "edge_skill": [],
     "edge_agent_core": ["edge_model", "edge_skill"],
-    "edge_dashboard": ["edge_agent_core", "edge_video"],
+    "edge_dashboard": ["edge_agent_core", "edge_video", "Threads::Threads"],
     "edge_pipeline": ["edge_video", "edge_filter", "edge_model", "edge_skill", "edge_agent_core", "edge_dashboard"],
 }
 

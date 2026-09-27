@@ -7,9 +7,14 @@
 #include <cstdio>
 #include <random>
 #include <thread>
+#if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <fstream>
+#include <unistd.h>
+#endif
 
 #include "app/pipeline.hpp"
 
@@ -23,9 +28,18 @@ static int failures = 0;
     } while (0)
 
 static size_t rss_mb() {
+#if defined(_WIN32)
     PROCESS_MEMORY_COUNTERS pmc{};
-    GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) return 0;
     return pmc.WorkingSetSize / (1024 * 1024);
+#else
+    std::ifstream statm("/proc/self/statm");
+    size_t virtual_pages = 0, resident_pages = 0;
+    if (!(statm >> virtual_pages >> resident_pages)) return 0;
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 0;
+    return resident_pages * static_cast<size_t>(page_size) / (1024 * 1024);
+#endif
 }
 
 int main(int argc, char** argv) {
@@ -70,6 +84,7 @@ int main(int argc, char** argv) {
         }
         last_frames = now;
         const size_t m = rss_mb();
+        CHECK(m > 0, "进程工作集内存采样应成功");
         min_mb = std::min(min_mb, m);
         max_mb = std::max(max_mb, m);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

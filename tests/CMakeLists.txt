@@ -11,9 +11,8 @@ edge_copy_runtime_dlls(deps_probe)
 add_test(NAME deps_probe COMMAND deps_probe)
 
 # ---------------------------------------------------------------------------
-# 视频测试 fixture：用 third_party 的 ffmpeg.exe 生成小型测试视频（不入库）
+# 视频测试 fixture：用平台 ffmpeg 可执行文件生成小型测试视频（不入库）
 # ---------------------------------------------------------------------------
-set(FFMPEG_EXE "${FFMPEG_ROOT}/bin/ffmpeg.exe")
 set(FIXTURE_DIR "${CMAKE_BINARY_DIR}/test-videos")
 file(MAKE_DIRECTORY "${FIXTURE_DIR}")
 set(FIXTURE_6S "${FIXTURE_DIR}/testsrc_6s.mp4")   # 动态画面：用于通用解码与筛帧
@@ -75,15 +74,19 @@ target_link_libraries(bounded_queue_test PRIVATE edge_core)
 edge_copy_runtime_dlls(bounded_queue_test)
 add_test(NAME bounded_queue_test COMMAND bounded_queue_test)
 
-# Phase 6：mtmd 单图推理（需要本地模型权重；缺失时测试失败）
+# Phase 6：mtmd 单图推理（仅在提供本地模型权重时运行）
 add_executable(vlm_smoke_test vlm_smoke_test.cpp)
 target_link_libraries(vlm_smoke_test PRIVATE edge_core)
 edge_copy_runtime_dlls(vlm_smoke_test)
-add_test(NAME vlm_smoke_test COMMAND vlm_smoke_test
-    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
-    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
-    "${FIXTURE_6S}")
-set_tests_properties(vlm_smoke_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+set(INTERNVL_MODEL "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf")
+set(INTERNVL_MMPROJ "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf")
+if(EXISTS "${INTERNVL_MODEL}" AND EXISTS "${INTERNVL_MMPROJ}")
+    add_test(NAME vlm_smoke_test COMMAND vlm_smoke_test
+        "${INTERNVL_MODEL}" "${INTERNVL_MMPROJ}" "${FIXTURE_6S}")
+    set_tests_properties(vlm_smoke_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+else()
+    message(STATUS "Skipping model test registration: InternVL model files are not present")
+endif()
 
 # Phase 7：Skill 加载与行为切换
 add_executable(skill_test skill_test.cpp)
@@ -137,11 +140,13 @@ add_test(NAME log_serialization_test COMMAND log_serialization_test)
 add_executable(determinism_test determinism_test.cpp)
 target_link_libraries(determinism_test PRIVATE edge_core)
 edge_copy_runtime_dlls(determinism_test)
-add_test(NAME determinism_test COMMAND determinism_test
-    "${CMAKE_SOURCE_DIR}/models/InternVL3-1B-Instruct-Q8_0.gguf"
-    "${CMAKE_SOURCE_DIR}/models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf"
-    "${FIXTURE_6S}")
-set_tests_properties(determinism_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+if(EXISTS "${INTERNVL_MODEL}" AND EXISTS "${INTERNVL_MMPROJ}")
+    add_test(NAME determinism_test COMMAND determinism_test
+        "${INTERNVL_MODEL}" "${INTERNVL_MMPROJ}" "${FIXTURE_6S}")
+    set_tests_properties(determinism_test PROPERTIES FIXTURES_REQUIRED VideoFixtures TIMEOUT 900)
+else()
+    message(STATUS "Skipping determinism test registration: InternVL model files are not present")
+endif()
 
 # R-021/R-023/R-031：CLI 行为（退出码与诊断）
 add_executable(cli_args_test cli_args_test.cpp)
@@ -150,14 +155,16 @@ edge_copy_runtime_dlls(cli_args_test)
 add_test(NAME cli_args_test COMMAND cli_args_test $<TARGET_FILE:edge_agent>)
 set_tests_properties(cli_args_test PROPERTIES TIMEOUT 300)
 
-# R-028：五类依赖缺失场景的隔离配置测试
-add_test(NAME dependency_error_tests
-    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-        "${CMAKE_SOURCE_DIR}/tests/dependency_error_tests.ps1"
-        -Cmake "${CMAKE_COMMAND}"
-        -Source "${CMAKE_SOURCE_DIR}"
-        -WorkRoot "$ENV{TEMP}/edge_dep_test_$PID")
-set_tests_properties(dependency_error_tests PROPERTIES TIMEOUT 900)
+# R-028：Windows 依赖缺失诊断的隔离配置测试
+if(WIN32)
+    add_test(NAME dependency_error_tests
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_SOURCE_DIR}/tests/dependency_error_tests.ps1"
+            -Cmake "${CMAKE_COMMAND}"
+            -Source "${CMAKE_SOURCE_DIR}"
+            -WorkRoot "$ENV{TEMP}/edge_dep_test_$PID")
+    set_tests_properties(dependency_error_tests PROPERTIES TIMEOUT 900)
+endif()
 
 # 远程 Web 面板状态、帧编码与有界历史
 add_executable(dashboard_test dashboard_test.cpp)
@@ -175,7 +182,11 @@ add_test(NAME visual_checklist_test COMMAND visual_checklist_test)
 add_executable(decision_model_test decision_model_test.cpp)
 target_link_libraries(decision_model_test PRIVATE edge_core)
 edge_copy_runtime_dlls(decision_model_test)
-add_test(NAME decision_model_test COMMAND decision_model_test
-    "${CMAKE_SOURCE_DIR}/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-    "${CMAKE_SOURCE_DIR}/skills/door-camera.md")
-set_tests_properties(decision_model_test PROPERTIES TIMEOUT 900)
+set(QWEN_MODEL "${CMAKE_SOURCE_DIR}/models/qwen2.5-1.5b-instruct-q4_k_m.gguf")
+if(EXISTS "${QWEN_MODEL}")
+    add_test(NAME decision_model_test COMMAND decision_model_test
+        "${QWEN_MODEL}" "${CMAKE_SOURCE_DIR}/skills/door-camera.md")
+    set_tests_properties(decision_model_test PROPERTIES TIMEOUT 900)
+else()
+    message(STATUS "Skipping decision model test registration: Qwen model file is not present")
+endif()
