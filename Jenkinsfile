@@ -8,6 +8,8 @@ pipeline {
         stage('Build and test') {
             steps {
                 bat '''
+                    git submodule update --init --recursive
+                    if errorlevel 1 exit /b %errorlevel%
                     cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
                     if errorlevel 1 exit /b %errorlevel%
                     cmake --build build --config Release --parallel 2
