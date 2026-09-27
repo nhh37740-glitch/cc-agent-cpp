@@ -9,24 +9,19 @@ static int failures = 0;
 int main() {
     std::string out;
     CHECK(app::normalize_visual_checklist(
-        "entrance: visible; ground_object: cardboard box; person: visible; hazard: no", out),
-        "明确纸箱事实应被规范化");
-    CHECK(out.find("ground_object: visible, cardboard box") != std::string::npos,
-          "纸箱应规范为可见地面物体");
-    CHECK(out.find("hazard: not visible") != std::string::npos, "no 应规范为 not visible");
-
+        "  门口有一个纸箱和一位快递员。  ", out),
+        "非空中文视觉描述应被接受");
+    CHECK(out == "门口有一个纸箱和一位快递员。", "视觉描述只去除首尾空白");
     CHECK(app::normalize_visual_checklist(
-        "entrance: yes; ground_object: package; person: courier; hazard: smoke", out),
-        "明确实体词应被接受");
-    CHECK(!app::normalize_visual_checklist(
-        "entrance: visible; ground_object: door; person: visible; hazard: no", out),
-        "door 不得被猜成地面物体");
-    CHECK(!app::normalize_visual_checklist(
-        "entrance: visible; ground_object: person; person: yes; hazard: no", out),
-        "person 不得被猜成地面物体");
-    CHECK(!app::normalize_visual_checklist(
-        "entrance: visible; ground_object: box; person: visible", out),
-        "缺字段必须失败");
+        "door and person visible", out),
+        "当前自然语言描述不依赖旧四字段协议");
+    CHECK(out == "door and person visible", "英文描述不应被改写");
+    CHECK(!app::normalize_visual_checklist(" \t\n ", out), "空白描述必须拒绝");
+    CHECK(!app::normalize_visual_checklist("scene: empty", out), "明确空场景必须拒绝");
+    CHECK(!app::normalize_visual_checklist(" SCENE: EMPTY. ", out),
+          "空场景标记的大小写和句点不影响拒绝");
+    CHECK(app::normalize_visual_checklist("an empty shelf with a box", out),
+          "普通句子中的 empty 不等于空场景标记");
 
     if (!failures) { std::fprintf(stderr, "[PASS] visual_checklist_test\n"); return 0; }
     return 1;

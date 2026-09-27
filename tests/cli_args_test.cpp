@@ -94,9 +94,16 @@ int main(int argc, char** argv) {
 
     CHECK(run_agent(exe, {"--video", "x.mp4", "--unattended"}).exit_code == 2,
           "无人值守未提供 web-port 应退出 2");
-    CHECK(run_agent(exe, {"--video", "x.mp4", "--model", "vision.gguf",
-                          "--mmproj", "mm.gguf"}).exit_code == 2,
-          "启用模型但缺 decision-model 应退出 2");
+    // 当前 CLI 只接入视觉模型；未接入的参数必须明确拒绝，不能被静默忽略。
+    auto decision_arg = run_agent(exe, {"--video", "x.mp4", "--model", "vision.gguf",
+                                         "--mmproj", "mm.gguf", "--decision-model", "qwen.gguf"});
+    CHECK(decision_arg.exit_code == 2 &&
+          decision_arg.output.find("--decision-model") != std::string::npos,
+          "未接入的 decision-model 参数应明确拒绝");
+    auto skill_arg = run_agent(exe, {"--video", "x.mp4", "--no-vlm",
+                                      "--skill", "skills/door-camera.md"});
+    CHECK(skill_arg.exit_code == 2 && skill_arg.output.find("--skill") != std::string::npos,
+          "未接入的 skill 参数应明确拒绝");
 
     // queue-capacity 非法值 → 2 且快速结束（不进入管线）
     for (const char* bad : {"0", "3", "9", "-1", "abc", "6x", "999999999999999999999"}) {

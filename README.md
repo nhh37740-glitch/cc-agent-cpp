@@ -1,6 +1,6 @@
 # edge-agent：Linux 多模态边缘 Agent Runtime
 
-C++20 本地视频 Agent。FFmpeg 按 PTS 单向解码，筛帧模块使用降采样 Y 平面；候选帧进入有界队列后，InternVL3-1B-Instruct 负责视觉事实，Qwen2.5-1.5B-Instruct 负责 Skill/工具决策。Agent 只允许 C++ `ToolRegistry` 白名单中的 `push_frame(summary)`。
+C++20 本地视频 Agent。FFmpeg 按 PTS 单向解码，筛帧模块使用降采样 Y 平面；候选帧进入有界队列后，由 InternVL3-1B-Instruct 生成视觉描述。当前 `edge_agent` 入口会把非空、非空场景的描述直接推送到本地只读面板。Qwen、Skill、`ToolRegistry` 与 Agent Loop 模块已编译并有独立测试，但尚未接入这个运行入口；当前运行结果不能作为双模型工具决策的验收证据。
 
 该仓库当前没有模型权重、真实演示视频或运行日志。CI 不下载模型、不伪造能力演示，也不启动模型推理；运行需要操作者另行提供真实来源可追溯且有使用权的 GGUF、mmproj 和输入视频。
 
@@ -48,8 +48,6 @@ sudo docker run --rm --read-only --tmpfs /tmp --tmpfs /workspace/logs \
   --video /input/source.mp4 \
   --model /models/InternVL3-1B-Instruct-Q8_0.gguf \
   --mmproj /models/mmproj-InternVL3-1B-Instruct-Q8_0.gguf \
-  --decision-model /models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  --skill /opt/edge-agent/skills/door-camera.md \
   --log /workspace/logs/events.jsonl \
   --web-port 8080 --web-bind 0.0.0.0 --unattended
 ```
@@ -69,8 +67,8 @@ Docker 将面板仅绑定到宿主机回环地址 `127.0.0.1:18103`，供服务�
 
 - 视频按 PTS 单向读取；不 seek、不二遍扫描、不缓存全视频，视频路径内存为 O(1)。
 - Video Worker 不等待 VLM；容量 4–8 的 `BoundedQueue` 满时淘汰最旧候选。
-- 只有模型成功执行 `push_frame` 的关键帧会进入只读面板。
-- Qwen 只接受精确 `PUSH` / `FINAL` 决策，Agent Loop 最多三次生成；无后续预算时返回 `STEP_LIMIT_REACHED`。
+- 当前入口在 VLM 返回非空视觉描述时直接推送候选帧；明确的 `scene: empty` 标记不会推送。
+- Qwen 决策、Skill 与 Agent Loop 当前仅在独立模块和测试中存在；接入主程序后才能验收完整工具路由。
 - 当前实现不承诺安防级视觉识别准确率。
 
 ## 许可说明

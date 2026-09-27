@@ -1,4 +1,4 @@
-// Phase 1 验收：确认 FFmpeg 头文件/导入库可链接、运行 DLL 可加载，
+// Phase 1 验收：确认 FFmpeg 运行库与编译期头文件的 ABI 主版本一致，
 // 以及 llama.cpp 的 llama 与 mtmd 目标真实存在且可链接。
 
 #include <cstdio>
@@ -19,13 +19,20 @@ int main() {
     unsigned avc = avcodec_version();
     unsigned sws = swscale_version();
     unsigned avu = avutil_version();
-    std::fprintf(stderr, "ffmpeg: avformat=%u.%u.%u avcodec=%u.%u.%u swscale=%u.avutil=%u.%u.%u\n",
+    std::fprintf(stderr, "ffmpeg: avformat=%u.%u.%u avcodec=%u.%u.%u swscale=%u.%u.%u avutil=%u.%u.%u\n",
         avf >> 16, (avf >> 8) & 0xFF, avf & 0xFF,
         avc >> 16, (avc >> 8) & 0xFF, avc & 0xFF,
-        sws >> 16,
+        sws >> 16, (sws >> 8) & 0xFF, sws & 0xFF,
         avu >> 16, (avu >> 8) & 0xFF, avu & 0xFF);
-    if ((avf >> 16) < 63 || (avu >> 16) < 61) {
-        std::fprintf(stderr, "[FAIL] FFmpeg 库版本过旧（期望 9.x 对应 avformat 63.x）\n");
+    if ((avf >> 16) != LIBAVFORMAT_VERSION_MAJOR ||
+        (avc >> 16) != LIBAVCODEC_VERSION_MAJOR ||
+        (sws >> 16) != LIBSWSCALE_VERSION_MAJOR ||
+        (avu >> 16) != LIBAVUTIL_VERSION_MAJOR) {
+        std::fprintf(stderr,
+            "[FAIL] FFmpeg 运行库与编译期头文件 ABI 主版本不一致："
+            "headers avformat=%d avcodec=%d swscale=%d avutil=%d\n",
+            LIBAVFORMAT_VERSION_MAJOR, LIBAVCODEC_VERSION_MAJOR,
+            LIBSWSCALE_VERSION_MAJOR, LIBAVUTIL_VERSION_MAJOR);
         return 1;
     }
 
@@ -38,6 +45,8 @@ int main() {
     logging::JsonlLogger logger("logs/events.jsonl");
     logger.event("deps_probe", {{"avformat", avf}});
     if (!logger.is_open()) return 1;
+
+    llama_backend_free();
 
     std::fprintf(stderr, "[PASS] deps_probe\n");
     return 0;

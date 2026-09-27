@@ -18,4 +18,6 @@ Linux CI 由 `Dockerfile.linux` 在 Ubuntu 24.04 x86_64 中构建，限制为单
 
 `edge_agent` 作为主程序入口运行单进程管线。Docker 镜像默认用 `--web-idle --web-port 8080` 提供等待配置页面：事件为空，明确说明没有真实输入且没有运行推理。这个模式不启动视频或模型管线。容器 healthcheck 与 `/healthz` 仅检测进程/面板服务存活，不表示模型已加载或分析已开始。
 
+目前主程序的视频运行路径只调用视觉模型，并将非空描述直接推送到面板。`edge_agent_core`、`edge_skill` 与文本决策模型虽作为模块交付，但尚未连接到该入口；模块归档与编译通过不等于双模型决策能力验收。
+
 Jenkins `DeployDemo` 参数默认关闭。启用后只发布等待配置容器到宿主机 `127.0.0.1:18103`，通过 `/healthz` 与 `/api/state` 验收；候选发布失败会恢复原容器。部署容器只使用 tmpfs 临时目录，不挂载视频或模型，并启用只读根目录、非 root、drop-all capabilities、no-new-privileges、资源限额与重启策略。

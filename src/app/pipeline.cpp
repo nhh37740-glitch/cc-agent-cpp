@@ -142,15 +142,14 @@ bool contains_any(const std::string& value, std::initializer_list<const char*> t
 }  // namespace
 
 bool normalize_visual_checklist(const std::string& content, std::string& normalized) {
-    // 用户需求：有内容就推送。VLM 如实描述画面，只要描述非空且不是空场景即视为有效。
+    // 当前运行路径接受自然语言视觉描述；仅空白与明确的空场景标记不推送。
     normalized = trim_copy(content);
     if (normalized.empty()) return false;
     std::string lower = normalized;
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    // 空场景标记，不算可见内容
-    if (lower.find("scene: empty") != std::string::npos &&
-        lower.find("scene: empty") == lower.find("empty")) return false;
+    if (lower == "scene: empty" || lower == "scene: empty." ||
+        lower == "empty" || lower == "empty.") return false;
     return true;
 }
 
@@ -177,17 +176,16 @@ bool perceive_visible_facts(model::Model& model, const video::CandidateFrame& ca
         last_output = response.text;
         const agent::ParsedOutput parsed = agent::parse_model_output(response.text);
         std::string normalized;
-        const bool complete_checklist = parsed.type == agent::OutputType::Final &&
-                                        normalize_visual_checklist(parsed.content, normalized);
-        if (complete_checklist) {
+        if (parsed.type == agent::OutputType::Final &&
+            normalize_visual_checklist(parsed.content, normalized)) {
             description = std::move(normalized);
             return true;
         }
-        // VLM 经常输出纯文本而非 JSON。只要文本非空，直接作为描述接受，
-        // 不因格式问题丢弃帧图片。
-        std::string raw = trim_copy(last_output);
-        if (!raw.empty()) {
-            description = std::move(raw);
+        // VLM 也可能输出纯文本。只对非结构化文本使用回退，避免把空场景
+        // 的 JSON 或错误的 tool_call 原文当成视觉事实。
+        if (parsed.type == agent::OutputType::Invalid &&
+            normalize_visual_checklist(last_output, normalized)) {
+            description = std::move(normalized);
             return true;
         }
         last_error = "empty_visual_observation";
