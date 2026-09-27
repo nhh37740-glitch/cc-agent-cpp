@@ -1,5 +1,12 @@
 pipeline {
     agent { label 'media-workspace-agent' }
+    parameters {
+        booleanParam(
+            name: 'DeployDemo',
+            defaultValue: false,
+            description: '部署仅显示等待配置状态的 C++ Web demo 到服务器回环端口 18103'
+        )
+    }
     options {
         timestamps()
         disableConcurrentBuilds()
@@ -62,7 +69,7 @@ pipeline {
                 archiveArtifacts artifacts: "dist/cc-agent-cpp-*-${BUILD_NUMBER}-linux-x86_64.tar.gz,dist/cc-agent-cpp-*-${BUILD_NUMBER}-linux-x86_64.tar.gz.sha256,dist/manifest-linux-x86_64.json", fingerprint: true
             }
         }
-        stage('Linux runtime image and CLI smoke check') {
+        stage('Linux runtime image, CLI, and idle dashboard smoke checks') {
             steps {
                 sh '''
                     set -eu
@@ -83,9 +90,45 @@ pipeline {
                       --build-arg SOURCE_TREE="$source_tree" \\
                       --tag "$image" .
                     sudo docker run --rm "$image" --help >/dev/null
+                    idle_container="$(sudo docker run --detach --publish 127.0.0.1::8080 "$image")"
+                    cleanup_idle() { sudo docker rm -f "$idle_container" >/dev/null 2>&1 || true; }
+                    trap cleanup_idle EXIT
+                    mapped_port="$(sudo docker port "$idle_container" 8080/tcp)"
+                    idle_port="${mapped_port##*:}"
+                    python3 - "$idle_port" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+
+url = f"http://127.0.0.1:{sys.argv[1]}/api/state"
+last_error = None
+for _ in range(30):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            state = json.load(response)
+        assert state["run_state"] == "waiting_config", state
+        assert state["events"] == [], state
+        assert "未运行推理" in state["run_detail"], state
+        print("Default image serves an empty, truthful waiting_config dashboard.")
+        break
+    except (OSError, AssertionError, KeyError, ValueError) as error:
+        last_error = error
+        time.sleep(1)
+else:
+    raise SystemExit(f"Waiting dashboard smoke check failed: {last_error}")
+PY
+                    cleanup_idle
+                    trap - EXIT
                     sudo docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$image"
                     printf 'Built %s; model inference is not started by CI.\\n' "$image"
                 '''
+            }
+        }
+        stage('Deploy waiting dashboard demo') {
+            when { expression { params.DeployDemo } }
+            steps {
+                sh 'bash scripts/deploy-demo-linux.sh "$BUILD_NUMBER"'
             }
         }
     }

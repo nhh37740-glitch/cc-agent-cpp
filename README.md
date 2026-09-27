@@ -22,13 +22,21 @@ Jenkins 使用标签 `media-workspace-agent`，需要 Linux x86_64、Docker CLI/
 2. 检查模块边界。
 3. 在 `Dockerfile.linux` 的 Ubuntu 24.04 build stage 内运行 CMake、完整 CTest 和 Linux 二进制打包。
 4. 从 build image 提取版本化 `.tar.gz` 二进制交付物，核对 SHA-256 并归档。
-5. 构建最终 runtime image，用 `edge_agent --help` 做无模型 CLI smoke check。
+5. 构建最终 runtime image，检查 `edge_agent --help`，并启动默认等待配置模式，核验 `/api/state` 是空事件列表且明确显示未运行推理。
 
-默认分支与该 Jenkins agent 的 Docker 权限由服务器 job 配置提供。流水线不挂载或拉取模型/视频，不发布端口，也不部署服务。
+默认分支与该 Jenkins agent 的 Docker 权限由服务器 job 配置提供。Jenkins 参数 `DeployDemo` 默认 `false`；只有显式启用且前面的构建与 smoke checks 成功后，才会调用 `scripts/deploy-demo-linux.sh` 发布等待配置页面。部署 smoke 仅映射服务器回环端口，不挂载或拉取模型/视频。
 
 ## Docker 环境隔离
 
-`Dockerfile.linux` 使用多阶段构建：Ubuntu 24.04 build stage 安装 CMake/Ninja、FFmpeg 开发包和编译依赖；runtime stage 仅安装共享运行库，使用非 root 的 `edge` 用户。镜像有进程存活 healthcheck；当有效配置启动面板时，程序还提供 `/healthz`。
+`Dockerfile.linux` 使用多阶段构建：Ubuntu 24.04 build stage 安装 CMake/Ninja、FFmpeg 开发包和编译依赖；runtime stage 仅安装共享运行库，使用非 root 的 `edge` 用户。镜像默认运行 `--web-idle`：立即提供真实的空面板，显示“等待配置”，不读取视频、不加载模型、不产生帧或推理结果。进程存活 healthcheck 与 HTTP `/healthz` 只表示服务存活，不代表已加载模型或开始分析。
+
+只需将宿主端口映射到容器 8080 即可即时访问该状态页：
+
+```bash
+sudo docker run -d --name cc-agent-cpp-demo -p 127.0.0.1:18103:8080 cc-agent-cpp:<tag>
+```
+
+服务器反向代理可访问 `http://127.0.0.1:18103/`。Jenkins 启用 `DeployDemo` 时，脚本在该回环端口发布等待配置页，验证 `/healthz` 和 `/api/state`，失败会移除候选容器并恢复旧容器。部署使用只读根目录、非 root、丢弃所有 Linux capabilities、禁止提权、256 MiB 内存、0.5 CPU 与 64 PID 限额，且不挂载模型或视频。开始分析仍需另外提供真实视频、模型权重与 Skill；流水线不下载或伪造这些素材。
 
 模型和视频必须从外部只读挂载。以下命令是路径模板，目录和文件须由部署者准备；仓库及服务器当前没有这些素材：
 

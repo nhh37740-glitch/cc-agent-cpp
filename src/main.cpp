@@ -36,11 +36,13 @@ struct Args {
     int64_t web_hold_seconds = 0;  // -1 表示完成后持续提供面板，直到进程被停止
     int64_t web_max_events = 20;
     bool unattended = false;
+    bool web_idle = false;
 };
 
 void print_usage() {
     std::printf(
         "usage: edge_agent --video <mp4> [--model vision.gguf --mmproj mm.gguf]\n"
+        "       edge_agent --web-idle --web-port <n> [--web-bind ip]\n"
         "                  [--log l.jsonl] [--no-pacing] [--no-vlm]\n"
         "                  [--max-seconds s] [--sample-interval-ms ms]\n"
         "                  [--threshold f] [--queue-capacity n] [--analysis-width px]\n"
@@ -62,6 +64,7 @@ void print_usage() {
         "  --web-bind <ip>            面板监听地址（默认 0.0.0.0，供局域网访问）\n"
         "  --web-hold-seconds <n>     视频结束后保留面板 N 秒；-1 一直保留\n"
         "  --web-max-events <n>       面板保留的候选事件数（1~100，默认 20）\n"
+        "  --web-idle                 仅提供空面板并显示等待配置；不读取视频或加载模型\n"
         "  --unattended               无人值守：等价于 --web-hold-seconds -1\n");
 }
 
@@ -101,6 +104,7 @@ bool parse_args(int argc, char** argv, Args& a) {
         else if (arg == "--log") { const char* v = need_value("--log"); if (!v) return false; a.log_path = v; }
         else if (arg == "--no-pacing") a.no_pacing = true;
         else if (arg == "--no-vlm") a.no_vlm = true;
+        else if (arg == "--web-idle") a.web_idle = true;
         else if (arg == "--unattended") a.unattended = true;
         else if (arg == "--max-seconds") {
             const char* v = need_value("--max-seconds"); if (!v) return false;
@@ -185,8 +189,17 @@ bool parse_args(int argc, char** argv, Args& a) {
         return false;
     }
 
-    if (a.video.empty()) {
+    if (!a.web_idle && a.video.empty()) {
         std::fprintf(stderr, "[ARG ERROR] 必须提供 --video\n");
+        return false;
+    }
+    if (a.web_idle && a.web_port == 0) {
+        std::fprintf(stderr, "[ARG ERROR] --web-idle 必须同时提供 --web-port\n");
+        return false;
+    }
+    if (a.web_idle && (!a.video.empty() || !a.model.empty() || !a.mmproj.empty())) {
+        std::fprintf(stderr,
+                     "[ARG ERROR] --web-idle 仅允许空配置；不得同时指定视频或模型\n");
         return false;
     }
     if (a.unattended) {
@@ -196,7 +209,7 @@ bool parse_args(int argc, char** argv, Args& a) {
             return false;
         }
     }
-    if (!a.no_vlm && (a.model.empty() || a.mmproj.empty())) {
+    if (!a.web_idle && !a.no_vlm && (a.model.empty() || a.mmproj.empty())) {
         std::fprintf(stderr,
                      "[ARG ERROR] 启用 VLM 时必须提供 --model 与 --mmproj\n");
         return false;
@@ -231,15 +244,6 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    logging::JsonlLogger logger(args.log_path);
-    if (!logger.is_open()) {
-        std::fprintf(stderr, "[FATAL] 无法打开日志文件: %s\n", args.log_path.c_str());
-        return 1;
-    }
-    logger.event("startup", {{"video", args.video},
-                             {"realtime_pacing", !args.no_pacing},
-                             {"vlm", !args.no_vlm}});
-
     // ---- 局域网远程面板（可选）----
     web::DashboardState dashboard((std::size_t)args.web_max_events);
     std::unique_ptr<web::DashboardServer> dashboard_server;
@@ -254,9 +258,29 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "[FATAL] %s\n", web_error.c_str());
             return 1;
         }
-        dashboard.set_run_state("loading", "正在加载模型与视频管线");
+        if (args.web_idle) {
+            dashboard.set_run_state(
+                "waiting_config",
+                "等待配置真实视频、模型权重与 Skill；当前未加载视频，也未运行推理");
+        } else {
+            dashboard.set_run_state("loading", "正在加载模型与视频管线");
+        }
         std::printf("Web dashboard: %s\n", dashboard_server->display_url().c_str());
     }
+
+    if (args.web_idle) {
+        std::printf("等待配置模式：只提供空面板，不读取视频或加载模型；按停止容器结束。\n");
+        for (;;) std::this_thread::sleep_for(std::chrono::hours(24));
+    }
+
+    logging::JsonlLogger logger(args.log_path);
+    if (!logger.is_open()) {
+        std::fprintf(stderr, "[FATAL] 无法打开日志文件: %s\n", args.log_path.c_str());
+        return 1;
+    }
+    logger.event("startup", {{"video", args.video},
+                             {"realtime_pacing", !args.no_pacing},
+                             {"vlm", !args.no_vlm}});
 
     // ---- 配置 ----
     app::PipelineConfig cfg;

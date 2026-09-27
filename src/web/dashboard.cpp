@@ -101,7 +101,7 @@ h1{font-size:20px;margin:0}.pill{padding:6px 12px;border-radius:999px;background
 let last='',activeId=0;
 // 模型输出属于不可信文本；插入 innerHTML 前必须转义。
 const esc=v=>v==null?'':String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const stateText={starting:'正在启动',running:'正在运行',complete:'处理完成',failed:'运行失败',pushed:'已推送',final:'无需推送',step_limit_reached:'达到步骤上限'};
+const stateText={starting:'正在启动',waiting_config:'等待配置',loading:'加载中',running:'正在运行',complete:'处理完成',error:'运行失败',failed:'运行失败',pushed:'已推送',final:'无需推送',step_limit_reached:'达到步骤上限'};
 async function refresh(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error(r.status);const s=await r.json();
 document.querySelector('#state').textContent=stateText[s.run_state]||'未知';
 document.querySelector('#detail').textContent=s.run_detail||`历史 ${s.events.length} 帧`;
@@ -110,7 +110,12 @@ const signature=JSON.stringify(s);if(signature!==last){last=signature;render(s)}
 function render(s){
   const center=document.querySelector('#center');const thumbs=document.querySelector('#thumbs');
   center.replaceChildren();thumbs.replaceChildren();
-  if(!s.events.length){center.innerHTML='<div class="empty">尚未推送关键帧</div>';return}
+  if(!s.events.length){
+    const message=s.run_state==='waiting_config'
+      ?'等待配置真实视频与模型。当前没有帧数据，也没有运行推理。'
+      :'尚未推送关键帧';
+    center.innerHTML=`<div class="empty">${esc(message)}</div>`;return
+  }
   // 自动跟踪最新帧：每次刷新都切到最新的推送帧
   activeId=s.events[0].id;
   const cur=s.events[0];

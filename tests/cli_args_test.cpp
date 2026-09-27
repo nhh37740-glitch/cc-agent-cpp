@@ -11,6 +11,9 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
 
 static int failures = 0;
 #define CHECK(cond, msg)                                                  \
@@ -27,7 +30,7 @@ struct RunResult {
     std::string output;
 };
 
-// 执行主程序并捕获输出（cmd 重定向到临时文件）
+// 执行主程序并捕获输出（由各平台 shell 重定向到临时文件）
 RunResult run_agent(const std::string& exe, const std::vector<std::string>& args) {
     std::string cmd = "\"" + exe + "\"";
     for (const auto& a : args) cmd += " " + a;
@@ -36,10 +39,18 @@ RunResult run_agent(const std::string& exe, const std::vector<std::string>& args
     cmd += " > \"" + out_file + "\" 2>&1";
 
     const auto t0 = std::chrono::steady_clock::now();
-    // 显式包一层 cmd /c 与外层引号，规避 std::system 的引号剥离歧义
-    const int rc = std::system(("\"" + cmd + "\"").c_str());
+    // Windows 的 system 经 cmd.exe 时需要额外的外层引号；POSIX 直接交给 /bin/sh。
+#if defined(_WIN32)
+    const int raw_rc = std::system(("\"" + cmd + "\"").c_str());
+    const int exit_code = raw_rc;
+#else
+    const int raw_rc = std::system(cmd.c_str());
+    const int exit_code = raw_rc == -1 ? -1
+        : WIFEXITED(raw_rc) ? WEXITSTATUS(raw_rc)
+        : 128 + WTERMSIG(raw_rc);
+#endif
     RunResult r;
-    r.exit_code = rc;
+    r.exit_code = exit_code;
     r.secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::ifstream f(out_file);
     std::string line;
@@ -60,6 +71,8 @@ int main(int argc, char** argv) {
         CHECK(r.exit_code == 0, (std::string(flag) + " 应退出 0").c_str());
         CHECK(r.output.find("--analysis-width") != std::string::npos,
               "帮助信息应含 --analysis-width");
+        CHECK(r.output.find("--web-idle") != std::string::npos,
+              "帮助信息应含无推理等待页面模式");
     }
 
     // 无参数 → 2
@@ -71,6 +84,13 @@ int main(int argc, char** argv) {
 
     // 缺参数值 → 2
     CHECK(run_agent(exe, {"--video"}).exit_code == 2, "缺少参数值应退出 2");
+
+    CHECK(run_agent(exe, {"--web-idle"}).exit_code == 2,
+          "等待配置模式未指定 web-port 应退出 2");
+    CHECK(run_agent(exe, {"--web-idle", "--web-port", "8080", "--video", "x.mp4"}).exit_code == 2,
+          "等待配置模式不得同时指定视频");
+    CHECK(run_agent(exe, {"--web-idle", "--web-port", "8080", "--model", "vision.gguf"}).exit_code == 2,
+          "等待配置模式不得同时指定模型");
 
     CHECK(run_agent(exe, {"--video", "x.mp4", "--unattended"}).exit_code == 2,
           "无人值守未提供 web-port 应退出 2");

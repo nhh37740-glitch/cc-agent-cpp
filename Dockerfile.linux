@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown -R edge:edge /workspace /opt/edge-agent
 
 WORKDIR /workspace
+EXPOSE 8080
 COPY --from=build --chown=edge:edge /src/build/src/edge_agent /usr/local/bin/edge_agent
 COPY --from=build --chown=edge:edge /src/skills/ /opt/edge-agent/skills/
 COPY --from=build --chown=edge:edge /src/README.md /opt/edge-agent/README.md
@@ -45,5 +46,5 @@ COPY --from=build --chown=edge:edge /src/third_party/llama.cpp/LICENSE /opt/edge
 COPY --from=build --chown=edge:edge /src/docs/THIRD_PARTY_NOTICES.md /opt/edge-agent/docs/THIRD_PARTY_NOTICES.md
 USER edge
 ENTRYPOINT ["/usr/local/bin/edge_agent"]
-CMD ["--help"]
+CMD ["--web-idle", "--web-port", "8080", "--web-bind", "0.0.0.0"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD kill -0 1
