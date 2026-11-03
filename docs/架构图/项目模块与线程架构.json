@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "edge_agent 项目模块与线程架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/架构图/项目模块与线程架构.html",
+    "repository": {
+      "url": "https://github.com/nhh37740-glitch/cc-agent-cpp.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b8ee6337b8fc08571b0a84a27b9297ce40e74011"
+    }
+  },
+  "components": [
+    {
+      "id": "main",
+      "type": "backend",
+      "label": "edge_agent 主程序",
+      "sublabel": "src/main.cpp · 参数解析与装配",
+      "tag": "edge_pipeline · 主线程",
+      "pos": [40, 240],
+      "size": [150, 72],
+      "sources": [{ "path": "src/main.cpp", "line": 285, "end_line": 327 }]
+    },
+    {
+      "id": "video_worker",
+      "type": "backend",
+      "label": "Video Worker",
+      "sublabel": "读帧 → 筛帧 → 转 RGB → 入队",
+      "tag": "jthread A · edge_video + edge_filter",
+      "pos": [250, 240],
+      "size": [170, 72],
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 26, "end_line": 123 }]
+    },
+    {
+      "id": "queue",
+      "type": "messagebus",
+      "label": "BoundedQueue",
+      "sublabel": "CandidateFrame · 容量 4~8",
+      "tag": "满时 drop_oldest",
+      "pos": [500, 240],
+      "size": [160, 72],
+      "sources": [{ "path": "include/queue/bounded_queue.hpp", "line": 20, "end_line": 60 }]
+    },
+    {
+      "id": "vlm_worker",
+      "type": "backend",
+      "label": "VLM Worker",
+      "sublabel": "出队 → LlamaVLM → 推送",
+      "tag": "jthread B · edge_model",
+      "pos": [740, 240],
+      "size": [170, 72],
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 210, "end_line": 250 }]
+    },
+    {
+      "id": "dashboard",
+      "type": "backend",
+      "label": "DashboardServer",
+      "sublabel": "有界事件环 · HTTP 只读",
+      "tag": "jthread C · edge_dashboard",
+      "pos": [990, 240],
+      "size": [170, 72],
+      "sources": [
+        { "path": "src/web/dashboard.cpp", "line": 219, "end_line": 300 },
+        { "path": "src/web/dashboard.cpp", "line": 320, "end_line": 370 }
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "局域网浏览器",
+      "sublabel": "GET /api/state · /frame/N.bmp",
+      "pos": [990, 420],
+      "size": [170, 64],
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 90, "end_line": 120 }]
+    },
+    {
+      "id": "ffmpeg",
+      "type": "external",
+      "label": "FFmpeg 9.0.1",
+      "sublabel": "libavformat / avcodec / swscale",
+      "tag": "单向解码，不 seek",
+      "pos": [250, 60],
+      "size": [170, 64],
+      "sources": [{ "path": "src/video/ffmpeg_video_source.cpp", "line": 52, "end_line": 160 }]
+    },
+    {
+      "id": "llamacpp",
+      "type": "external",
+      "label": "llama.cpp + mtmd",
+      "sublabel": "锁定 v0.3.0 · CPU 推理",
+      "tag": "模型加载 / 生成",
+      "pos": [740, 60],
+      "size": [170, 64],
+      "sources": [
+        { "path": "CMakeLists.txt", "line": 120, "end_line": 180 },
+        { "path": "src/model/llama_vlm.cpp", "line": 21, "end_line": 78 }
+      ]
+    },
+    {
+      "id": "gguf",
+      "type": "database",
+      "label": "GGUF 权重文件",
+      "sublabel": "InternVL3-1B + mmproj",
+      "tag": "磁盘资产，不入 Git",
+      "pos": [990, 60],
+      "size": [170, 64],
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 24, "end_line": 52 }]
+    }
+  ],
+  "connections": [
+    {
+      "id": "main-starts-video",
+      "from": "main",
+      "to": "video_worker",
+      "label": "启动 jthread A",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-starts-vlm",
+      "from": "main",
+      "to": "vlm_worker",
+      "label": "启动 jthread B",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[115, 380], [825, 380]]
+    },
+    {
+      "id": "ffmpeg-frames",
+      "from": "ffmpeg",
+      "to": "video_worker",
+      "label": "解码帧（YUV 平面）",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "video-push",
+      "from": "video_worker",
+      "to": "queue",
+      "label": "push 候选帧",
+      "variant": "emphasis"
+    },
+    {
+      "id": "queue-pop",
+      "from": "queue",
+      "to": "vlm_worker",
+      "label": "pop 阻塞等待",
+      "variant": "emphasis"
+    },
+    {
+      "id": "vlm-generate",
+      "from": "vlm_worker",
+      "to": "llamacpp",
+      "label": "LlamaVLM::generate()",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "gguf-load",
+      "from": "gguf",
+      "to": "llamacpp",
+      "label": "加载权重",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "vlm-publish",
+      "from": "vlm_worker",
+      "to": "dashboard",
+      "label": "publish_push",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dashboard-http",
+      "from": "dashboard",
+      "to": "browser",
+      "label": "HTTP 响应",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "线程与解耦",
+      "items": [
+        "Video Worker 与 VLM Worker 是两个 std::jthread，主线程 join 后汇总统计。",
+        "BoundedQueue 容量 4~8；队满时淘汰最旧候选，Video Worker 从不等待 VLM。",
+        "stop_token 可中断 PTS 等待与出队阻塞，避免进程停止时挂起。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "CMake 模块",
+      "items": [
+        "七个静态库：edge_video、edge_filter、edge_model、edge_skill、edge_agent_core、edge_dashboard、edge_pipeline。",
+        "edge_agent 可执行文件只链接 edge_pipeline，模块依赖方向由 src/CMakeLists.txt 固定。",
+        "FFmpeg 与 llama.cpp 是外部依赖；GGUF 权重与视频素材不进入仓库。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "当前运行边界",
+      "items": [
+        "主入口只加载 LlamaVLM，把非空视觉描述直接 publish_push 到面板。",
+        "Skill、ToolRegistry、Agent Loop、LlamaText/Qwen 与 ToolDecisionModel 已编译并有独立测试，但本图没有调用边。",
+        "双模型工具决策未接入主入口，运行结果不能作为该能力的验收证据。"
+      ]
+    }
+  ]
+}

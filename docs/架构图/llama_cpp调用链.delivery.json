@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "45a9fbae-abcf-48ea-85a6-b007eb7a765f",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\llama_cpp调用链.json",
+  "output": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\llama_cpp调用链.html",
+  "specification": {
+    "sha256": "7d25f39cbc967e8a2f33484a94a26fe3dc65b1229c3bac8e81fd544050f0b4a7",
+    "bytes": 7568
+  },
+  "artifact": {
+    "sha256": "d072bbf64c4660c2dc3b224f01d8a391fc26f9472f767a55169946f3cb96f688",
+    "bytes": 830990
+  }
+}

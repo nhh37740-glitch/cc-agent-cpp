@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "7a58d709-18c2-4abf-a818-ba27377cbbb8",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\视频管线数据流.json",
+  "output": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\视频管线数据流.html",
+  "specification": {
+    "sha256": "f7f246df711f552d22ea702254b88d1e89647d483649895ff19f2701984c13e1",
+    "bytes": 8212
+  },
+  "artifact": {
+    "sha256": "83a5e967ee0bd90d536b0d4ab663767368ce9a46caadc553a21413a73700cefc",
+    "bytes": 834922
+  }
+}
