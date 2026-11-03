@@ -1,0 +1,84 @@
+name: 版本图检查
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  diagrams:
+    name: 版本图检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 获取仓库与图中引用的提交
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 获取 Archify 与校验脚本
+        uses: actions/checkout@v4
+        with:
+          repository: nhh37740-glitch/langrensha-agent
+          ref: 25e4265f84231f1f89b4f4fd74472177ad35e4c9
+          path: .archify-src
+          sparse-checkout: |
+            .agents/skills/archify
+            .github/scripts
+          sparse-checkout-cone-mode: false
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 准备中文字体
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          fc-match 'Noto Sans CJK SC'
+      - name: 核对架构图与源码
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [ ! -d 'docs/架构图' ]; then
+            echo 'docs/架构图 不存在，本提交没有架构图，跳过'
+            exit 0
+          fi
+          sources=()
+          for candidate in docs/架构图/*.json; do
+            case "$candidate" in
+              *.delivery.json) continue ;;
+            esac
+            sources+=("$candidate")
+          done
+          if [ ${#sources[@]} -eq 0 ]; then
+            echo 'docs/架构图 下没有可验证的图源 JSON'
+            exit 1
+          fi
+          for source_path in "${sources[@]}"; do
+            diagram_type=$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["diagram_type"])' "$source_path")
+            revision=$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["meta"]["repository"]["revision"])' "$source_path")
+            git cat-file -e "$revision^{commit}"
+            git merge-base --is-ancestor "$revision" HEAD
+            name=$(basename "$source_path" .json)
+            published_path="docs/架构图/$name.html"
+            output_path="临时/版本图检查/$name.html"
+            mkdir -p "临时/版本图检查/$name-证据"
+            node .archify-src/.agents/skills/archify/bin/archify.mjs finalize "$diagram_type" \
+              "$source_path" "$output_path" \
+              --repo-root . --quality showcase \
+              --out-dir "临时/版本图检查/$name-证据" --json
+            python .archify-src/.github/scripts/校验版本图.py \
+              "$source_path" "$published_path" "$output_path"
+          done
+      - name: 保存验证证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 架构图验证
+          path: 临时/版本图检查/
+          if-no-files-found: ignore

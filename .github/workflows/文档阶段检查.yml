@@ -1,0 +1,24 @@
+name: 文档阶段检查
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  documents:
+    name: 文档阶段检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 获取仓库
+        uses: actions/checkout@v4
+      - name: 校验正式文档入口
+        run: |
+          set -euo pipefail
+          test -f AGENTS.md
+          test -f README.md
+          test -f 'cpp本地小模型demo.md'
+          echo "AGENTS.md、README.md、cpp本地小模型demo.md 均存在"
