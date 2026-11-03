@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "257ebe4b-1e6b-4c87-9d07-dd3eb55ab8d3",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\主入口与未接入路径.json",
+  "output": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\主入口与未接入路径.html",
+  "specification": {
+    "sha256": "c15c3dab9fb5b5659a76e22650f3c1c021dab32148edf2b351cbfc262b0a5210",
+    "bytes": 7171
+  },
+  "artifact": {
+    "sha256": "61a1e7076144f7c4b115360f65bacf20d287c94f90271ce7cea4141c9faffa53",
+    "bytes": 833404
+  }
+}

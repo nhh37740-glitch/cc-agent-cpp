@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "llama.cpp 调用链：加载、生成与释放",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "output": "docs/架构图/llama_cpp调用链.html",
+    "repository": {
+      "url": "https://github.com/nhh37740-glitch/cc-agent-cpp.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b8ee6337b8fc08571b0a84a27b9297ce40e74011"
+    }
+  },
+  "participants": [
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "VLM Worker",
+      "sublabel": "app::vlm_worker",
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 158, "end_line": 250 }]
+    },
+    {
+      "id": "vlm",
+      "type": "backend",
+      "label": "model::LlamaVLM",
+      "sublabel": "C++ 适配器",
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 21, "end_line": 88 }]
+    },
+    {
+      "id": "llama",
+      "type": "external",
+      "label": "llama.cpp",
+      "sublabel": "llama.h",
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 21, "end_line": 78 }]
+    },
+    {
+      "id": "mtmd",
+      "type": "external",
+      "label": "mtmd",
+      "sublabel": "多模态扩展",
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 46, "end_line": 60 }]
+    },
+    {
+      "id": "gguf",
+      "type": "database",
+      "label": "GGUF 文件",
+      "sublabel": "主模型 + mmproj",
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 24, "end_line": 52 }]
+    },
+    {
+      "id": "sampler",
+      "type": "backend",
+      "label": "llama_sampler",
+      "sublabel": "采样链",
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 63, "end_line": 76 }]
+    }
+  ],
+  "segments": [
+    { "from": 150, "to": 610, "label": "构造与加载" },
+    { "from": 615, "to": 1115, "label": "单次 generate" },
+    { "from": 1124, "to": 1360, "label": "释放" }
+  ],
+  "messages": [
+    { "id": "construct", "from": "worker", "to": "vlm", "y": 160, "label": "new LlamaVLM(params)", "variant": "default", "note": "构造即加载；失败时 is_loaded()=false，last_error() 给出原因" },
+    { "id": "backend-init", "from": "vlm", "to": "llama", "y": 220, "label": "acquire_llama_backend()", "variant": "default", "note": "全局后端引用计数，两个模型实例共享" },
+    { "id": "load-model", "from": "vlm", "to": "llama", "y": 280, "label": "llama_model_load_from_file(GGUF)", "variant": "emphasis", "note": "GGUF 是权重、词表和超参数的容器格式；n_gpu_layers=0 表示 CPU 推理" },
+    { "id": "read-gguf", "from": "llama", "to": "gguf", "y": 352, "label": "读取权重与词表", "variant": "default", "note": "按文件路径加载；权重与视频素材不进入 Git" },
+    { "id": "init-context", "from": "vlm", "to": "llama", "y": 412, "label": "llama_init_from_model(n_ctx=4096)", "variant": "emphasis", "note": "分配 context：KV cache 与计算缓冲；KV cache 保存已处理 token 的键值，避免重复计算" },
+    { "id": "init-mtmd", "from": "vlm", "to": "mtmd", "y": 489, "label": "mtmd_init_from_file(mmproj)", "variant": "emphasis", "note": "mmproj 是视觉投影权重；mtmd 负责把图片变成模型可读的向量" },
+    { "id": "init-sampler", "from": "vlm", "to": "sampler", "y": 556, "label": "llama_sampler_chain_init + greedy", "variant": "default", "note": "temp=0 用 greedy；temp>0 时组合 penalties、top_p、temp、dist" },
+    { "id": "generate", "from": "worker", "to": "vlm", "y": 620, "label": "generate(messages, rgb)", "variant": "emphasis", "note": "每次 generate 都是独立对话，单图输入" },
+    { "id": "reset-state", "from": "vlm", "to": "llama", "y": 681, "label": "llama_memory_clear + llama_sampler_reset", "variant": "default", "note": "清空 KV cache 与采样历史，候选帧之间不残留状态" },
+    { "id": "bitmap", "from": "vlm", "to": "mtmd", "y": 742, "label": "mtmd_bitmap_init(w, h, rgb)", "variant": "default", "note": "把 RGB24 缓冲包装成 mtmd 位图" },
+    { "id": "tokenize", "from": "vlm", "to": "mtmd", "y": 803, "label": "mtmd_tokenize(prompt, bitmap)", "variant": "emphasis", "note": "ChatML 文本与 <__media__> 图像拆成文本 chunk 和图像 chunk" },
+    { "id": "eval-chunks", "from": "vlm", "to": "mtmd", "y": 869, "label": "mtmd_helper_eval_chunks(...)", "variant": "emphasis", "note": "文本 tokenize+decode；图像经视觉编码后写入 context" },
+    { "id": "sample", "from": "vlm", "to": "sampler", "y": 936, "label": "llama_sampler_sample(ctx, -1)", "variant": "emphasis", "note": "从最后一个位置的 logits 采样下一个 token" },
+    { "id": "decode-token", "from": "vlm", "to": "llama", "y": 997, "label": "llama_decode(单个 token)", "variant": "default", "note": "新 token 追加进 KV cache，供下一次采样" },
+    { "id": "return", "from": "vlm", "to": "worker", "y": 1058, "label": "返回生成的文本", "variant": "return", "note": "遇到 EOG 或 <|im_end|> 停止；上限 max_tokens=256" },
+    { "id": "destroy", "from": "worker", "to": "vlm", "y": 1130, "label": "析构 / unload()", "variant": "default", "note": "按固定顺序释放，先采样器后模型" },
+    { "id": "free-sampler", "from": "vlm", "to": "sampler", "y": 1185, "label": "llama_sampler_free", "variant": "default" },
+    { "id": "free-mtmd", "from": "vlm", "to": "mtmd", "y": 1215, "label": "mtmd_free", "variant": "default" },
+    { "id": "free-context", "from": "vlm", "to": "llama", "y": 1245, "label": "llama_free(ctx)", "variant": "default" },
+    { "id": "free-model", "from": "vlm", "to": "llama", "y": 1275, "label": "llama_model_free(model)", "variant": "default" },
+    { "id": "release-backend", "from": "vlm", "to": "llama", "y": 1305, "label": "release_llama_backend()", "variant": "default", "note": "引用计数归零时调用 llama_backend_free()" }
+  ],
+  "activations": [
+    { "participant": "vlm", "from": 160, "to": 1360, "type": "backend" },
+    { "participant": "llama", "from": 220, "to": 1315, "type": "external" },
+    { "participant": "mtmd", "from": 489, "to": 1230, "type": "external" },
+    { "participant": "gguf", "from": 352, "to": 407, "type": "database" },
+    { "participant": "sampler", "from": 556, "to": 1200, "type": "backend" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "术语对照",
+      "items": [
+        "GGUF：llama.cpp 使用的模型文件格式，内含权重、词表和超参数。",
+        "context：一次会话的运行内存，包含 KV cache 与计算缓冲。",
+        "tokenize：把文本切成 token；decode：把 token 送入模型并更新 KV cache。",
+        "sampler：根据 logits 选下一个 token；mtmd：处理图片输入的多模态扩展。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "为什么顺序重要",
+      "items": [
+        "必须先加载模型，才能创建 context 和 mtmd 上下文。",
+        "每次生成前清空 KV cache 并重置 sampler，避免上一帧影响下一帧。",
+        "释放顺序与创建顺序相反：sampler → mtmd → context → model → backend。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "当前使用范围",
+      "items": [
+        "本图对应 LlamaVLM，是主入口实际使用的路径。",
+        "LlamaText（Qwen2.5-1.5B）复用同一套 backend 引用计数与 sampler 模式，但主入口未创建它。",
+        "Agent Loop、ToolRegistry 与 ToolDecisionModel 不在本调用链中。"
+      ]
+    }
+  ]
+}

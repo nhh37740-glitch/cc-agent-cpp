@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "8e68c18e-9ae0-4387-98b9-bc72cad55d73",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\项目模块与线程架构.json",
+  "output": "C:\\Users\\ZZ\\Documents\\project\\cc-agent-cpp\\docs\\架构图\\项目模块与线程架构.html",
+  "specification": {
+    "sha256": "f060fb868aa229c4a96771df9b0362dad7a78f82463213360e7a584832d439de",
+    "bytes": 6380
+  },
+  "artifact": {
+    "sha256": "d0e3012e1b63333d49e9942fe4ad202541951f3f6eb69215946f08b6aee250a3",
+    "bytes": 829656
+  }
+}

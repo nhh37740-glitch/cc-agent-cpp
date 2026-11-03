@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "视频到面板的数据流",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/架构图/视频管线数据流.html",
+    "repository": {
+      "url": "https://github.com/nhh37740-glitch/cc-agent-cpp.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b8ee6337b8fc08571b0a84a27b9297ce40e74011"
+    }
+  },
+  "stages": [
+    { "label": "解码" },
+    { "label": "筛帧" },
+    { "label": "候选与队列" },
+    { "label": "视觉推理" },
+    { "label": "发布" }
+  ],
+  "nodes": [
+    {
+      "id": "ffmpeg_lib",
+      "type": "external",
+      "label": "FFmpeg 库",
+      "sublabel": "av_read_frame / avcodec",
+      "tag": "只读，不 seek",
+      "stage": 0,
+      "row": 0,
+      "sources": [{ "path": "src/video/ffmpeg_video_source.cpp", "line": 119, "end_line": 160 }]
+    },
+    {
+      "id": "source",
+      "type": "backend",
+      "label": "FFmpeg 视频源",
+      "sublabel": "FFmpegFileSource + Pacing",
+      "tag": "按 PTS 等待 · EOF flush",
+      "stage": 0,
+      "row": 1,
+      "width": 150,
+      "sources": [
+        { "path": "src/video/ffmpeg_video_source.cpp", "line": 52, "end_line": 160 },
+        { "path": "src/video/realtime_pacing_source.cpp", "line": 7, "end_line": 34 }
+      ]
+    },
+    {
+      "id": "filter",
+      "type": "backend",
+      "label": "FrameFilter::analyze",
+      "sublabel": "时间门控 2000ms",
+      "tag": "edge_filter",
+      "stage": 1,
+      "row": 1,
+      "width": 150,
+      "sources": [{ "path": "src/filter/frame_filter.cpp", "line": 29, "end_line": 63 }]
+    },
+    {
+      "id": "ydown",
+      "type": "backend",
+      "label": "downsample_y",
+      "sublabel": "160×90 亮度平面",
+      "tag": "只读 Y plane",
+      "stage": 1,
+      "row": 2,
+      "width": 150,
+      "sources": [{ "path": "src/filter/frame_filter.cpp", "line": 12, "end_line": 27 }]
+    },
+    {
+      "id": "diff",
+      "type": "backend",
+      "label": "平均绝对差",
+      "sublabel": "change_score ∈ [0,1]",
+      "tag": "阈值默认 0.15",
+      "stage": 1,
+      "row": 3,
+      "sources": [{ "path": "src/filter/frame_filter.cpp", "line": 43, "end_line": 62 }]
+    },
+    {
+      "id": "drop_low",
+      "type": "messagebus",
+      "label": "丢弃该帧",
+      "sublabel": "变化不足，不转 RGB",
+      "icon": "failure",
+      "stage": 1,
+      "row": 4,
+      "sources": [{ "path": "src/filter/frame_filter.cpp", "line": 61, "end_line": 61 }]
+    },
+    {
+      "id": "rgb",
+      "type": "backend",
+      "label": "convert_to_rgb",
+      "sublabel": "sws_scale → RGB24",
+      "tag": "缩放到 448 宽",
+      "stage": 2,
+      "row": 1,
+      "sources": [{ "path": "src/video/yuv_to_rgb.cpp", "line": 12, "end_line": 49 }]
+    },
+    {
+      "id": "candidate",
+      "type": "messagebus",
+      "label": "CandidateFrame",
+      "sublabel": "RGB + PTS + score",
+      "tag": "候选确定后才分配",
+      "icon": "neutral",
+      "stage": 2,
+      "row": 2,
+      "sources": [{ "path": "include/video/candidate_frame.hpp", "line": 1, "end_line": 22 }]
+    },
+    {
+      "id": "queue",
+      "type": "messagebus",
+      "label": "BoundedQueue",
+      "sublabel": "容量 4~8",
+      "tag": "push 非阻塞",
+      "stage": 2,
+      "row": 3,
+      "sources": [{ "path": "include/queue/bounded_queue.hpp", "line": 29, "end_line": 54 }]
+    },
+    {
+      "id": "drop_old",
+      "type": "messagebus",
+      "label": "淘汰最旧候选",
+      "sublabel": "drop_oldest",
+      "tag": "dropped_full 计数",
+      "icon": "failure",
+      "stage": 2,
+      "row": 4,
+      "sources": [{ "path": "include/queue/bounded_queue.hpp", "line": 31, "end_line": 35 }]
+    },
+    {
+      "id": "vlm",
+      "type": "backend",
+      "label": "LlamaVLM::generate",
+      "sublabel": "InternVL3-1B 生成描述",
+      "tag": "单图，最多重试 1 次",
+      "stage": 3,
+      "row": 1,
+      "width": 150,
+      "sources": [
+        { "path": "src/app/pipeline.cpp", "line": 158, "end_line": 205 },
+        { "path": "src/model/llama_vlm.cpp", "line": 103, "end_line": 180 }
+      ]
+    },
+    {
+      "id": "normalize",
+      "type": "backend",
+      "label": "normalize_visual_checklist",
+      "sublabel": "去空白，拒绝 scene: empty",
+      "tag": "空描述不推送",
+      "stage": 3,
+      "row": 2,
+      "width": 190,
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 144, "end_line": 154 }]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "DashboardState",
+      "sublabel": "有界事件环",
+      "tag": "仅已推送可见",
+      "stage": 4,
+      "row": 2,
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 219, "end_line": 292 }]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "DashboardServer",
+      "sublabel": "GET /api/state · 帧 BMP",
+      "tag": "只读 HTTP",
+      "stage": 4,
+      "row": 3,
+      "width": 150,
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 320, "end_line": 340 }]
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "局域网浏览器",
+      "sublabel": "每秒刷新",
+      "stage": 4,
+      "row": 4,
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 90, "end_line": 120 }]
+    }
+  ],
+  "flows": [
+    { "from": "ffmpeg_lib", "to": "source", "label": "解码 API", "variant": "default", "route": "vertical-channel" },
+    { "from": "source", "to": "filter", "label": "Frame（YUV + PTS）", "variant": "emphasis", "route": "straight", "labelAt": [213, 233] },
+    { "from": "filter", "to": "ydown", "label": "时间门控通过", "variant": "default", "route": "vertical-channel" },
+    { "from": "ydown", "to": "diff", "label": "小图对比", "variant": "default", "route": "vertical-channel", "labelAt": [335, 429] },
+    { "from": "diff", "to": "drop_low", "label": "score < 0.15", "variant": "dashed", "route": "vertical-channel" },
+    { "from": "diff", "to": "rgb", "label": "score ≥ 0.15", "variant": "emphasis", "route": "straight" },
+    { "from": "rgb", "to": "candidate", "label": "RGB24 448 宽", "variant": "emphasis", "route": "vertical-channel", "labelAt": [520, 334] },
+    { "from": "candidate", "to": "queue", "label": "push", "variant": "emphasis", "route": "vertical-channel" },
+    { "from": "queue", "to": "drop_old", "label": "队满时淘汰", "variant": "dashed", "route": "vertical-channel" },
+    { "from": "queue", "to": "vlm", "label": "pop 阻塞等待", "variant": "emphasis", "route": "straight" },
+    { "from": "vlm", "to": "normalize", "label": "原始描述文本", "variant": "emphasis", "route": "vertical-channel" },
+    { "from": "normalize", "to": "state", "label": "写面板", "variant": "emphasis", "route": "straight" },
+    { "from": "state", "to": "server", "label": "snapshot_json", "variant": "default", "route": "vertical-channel" },
+    { "from": "server", "to": "browser", "label": "HTML + BMP", "variant": "emphasis", "route": "vertical-channel" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "内存与代价",
+      "items": [
+        "筛帧只读取解码帧的 Y 平面，并降采样到 160×90；RGB 转换只发生在候选帧上。",
+        "队列容量固定为 4~8，视频管线内存不随视频长度增长。",
+        "VLM 处理慢只会让队列淘汰旧候选，不会阻塞 Video Worker。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "三条丢弃路径",
+      "items": [
+        "时间门控未到采样间隔：不评估，直接继续读下一帧。",
+        "变化分数低于阈值：不进入候选，也不做 RGB 转换。",
+        "队列已满：push 淘汰最旧元素，保留最新候选；dropped_full 计数可观测。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "面板可见性",
+      "items": [
+        "DashboardState 先隐藏候选，publish_push 成功后才出现在 /api/state。",
+        "历史长度有上限，未推送候选不会挤掉已推送记录。",
+        "面板只读：所有请求都是 GET，帧以 BMP 返回。"
+      ]
+    }
+  ]
+}

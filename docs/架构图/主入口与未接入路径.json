@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "主入口已实现路径与未接入的 Qwen/Agent 路径",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/架构图/主入口与未接入路径.html",
+    "repository": {
+      "url": "https://github.com/nhh37740-glitch/cc-agent-cpp.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b8ee6337b8fc08571b0a84a27b9297ce40e74011"
+    }
+  },
+  "components": [
+    {
+      "id": "video",
+      "type": "backend",
+      "label": "Video Worker",
+      "sublabel": "解码 → 筛帧 → 候选帧",
+      "tag": "edge_video + edge_filter",
+      "pos": [40, 60],
+      "size": [150, 64],
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 26, "end_line": 123 }]
+    },
+    {
+      "id": "vlm",
+      "type": "backend",
+      "label": "LlamaVLM",
+      "sublabel": "InternVL3 生成视觉描述",
+      "tag": "主入口实际加载",
+      "pos": [240, 60],
+      "size": [150, 64],
+      "sources": [{ "path": "src/model/llama_vlm.cpp", "line": 103, "end_line": 180 }]
+    },
+    {
+      "id": "publish",
+      "type": "backend",
+      "label": "直接 publish_push",
+      "sublabel": "不经过 ToolRegistry",
+      "tag": "vlm_worker 内调用",
+      "pos": [440, 60],
+      "size": [150, 64],
+      "sources": [{ "path": "src/app/pipeline.cpp", "line": 210, "end_line": 250 }]
+    },
+    {
+      "id": "dashboard",
+      "type": "backend",
+      "label": "DashboardServer",
+      "sublabel": "只读面板",
+      "tag": "edge_dashboard",
+      "pos": [680, 60],
+      "size": [150, 64],
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 219, "end_line": 340 }]
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "局域网浏览器",
+      "sublabel": "/api/state · /frame/N.bmp",
+      "pos": [880, 60],
+      "size": [150, 64],
+      "sources": [{ "path": "src/web/dashboard.cpp", "line": 90, "end_line": 120 }]
+    },
+    {
+      "id": "skill",
+      "type": "backend",
+      "label": "skill::load_skill",
+      "sublabel": "build_system_prompt",
+      "tag": "edge_skill",
+      "pos": [40, 320],
+      "size": [150, 64],
+      "sources": [{ "path": "src/skill/skill_loader.cpp", "line": 18, "end_line": 67 }]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "agent::Agent::run",
+      "sublabel": "最多 3 次模型生成",
+      "tag": "edge_agent_core",
+      "pos": [240, 320],
+      "size": [150, 64],
+      "sources": [
+        { "path": "src/agent/agent.cpp", "line": 14, "end_line": 109 },
+        { "path": "tests/agent_loop_test.cpp", "line": 30, "end_line": 50 }
+      ]
+    },
+    {
+      "id": "decision",
+      "type": "backend",
+      "label": "ToolDecisionModel",
+      "sublabel": "生成 tool_call / final JSON",
+      "tag": "包装文本模型",
+      "pos": [470, 320],
+      "size": [150, 64],
+      "sources": [{ "path": "src/model/tool_decision_model.cpp", "line": 28, "end_line": 86 }]
+    },
+    {
+      "id": "qwen",
+      "type": "backend",
+      "label": "LlamaText（Qwen2.5-1.5B）",
+      "sublabel": "纯文本 generate",
+      "tag": "edge_model",
+      "pos": [760, 320],
+      "size": [170, 64],
+      "sources": [{ "path": "src/model/llama_text.cpp", "line": 22, "end_line": 106 }]
+    },
+    {
+      "id": "registry",
+      "type": "backend",
+      "label": "ToolRegistry",
+      "sublabel": "唯一工具 push_frame",
+      "tag": "白名单在 C++ 强制",
+      "pos": [240, 460],
+      "size": [150, 64],
+      "sources": [
+        { "path": "src/agent/builtin_tools.cpp", "line": 12, "end_line": 32 },
+        { "path": "include/agent/tool_registry.hpp", "line": 20, "end_line": 44 }
+      ]
+    },
+    {
+      "id": "sink",
+      "type": "backend",
+      "label": "push_frame_sink",
+      "sublabel": "测试注入的回调",
+      "tag": "主入口未注入",
+      "pos": [440, 460],
+      "size": [150, 64],
+      "sources": [{ "path": "tests/decision_model_test.cpp", "line": 21, "end_line": 27 }]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "主入口已接入（edge_agent 可运行）",
+      "wraps": ["video", "vlm", "publish", "dashboard"],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "主入口未创建（仅编译与独立测试）",
+      "wraps": ["skill", "agent", "decision", "qwen", "registry", "sink"],
+      "pad": 22
+    }
+  ],
+  "connections": [
+    { "id": "video-vlm", "from": "video", "to": "vlm", "label": "候选帧", "variant": "emphasis" },
+    { "id": "vlm-publish", "from": "vlm", "to": "publish", "label": "视觉描述", "variant": "emphasis" },
+    { "id": "publish-dashboard", "from": "publish", "to": "dashboard", "label": "publish_push", "variant": "emphasis", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "id": "dashboard-browser", "from": "dashboard", "to": "browser", "label": "HTTP GET" },
+    { "id": "skill-agent", "from": "skill", "to": "agent", "label": "系统提示" },
+    { "id": "agent-decision", "from": "agent", "to": "decision", "label": "generate()", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "id": "decision-qwen", "from": "decision", "to": "qwen", "label": "构造注入，当前未调用", "variant": "dashed", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "id": "agent-registry", "from": "agent", "to": "registry", "label": "tool_call", "fromSide": "bottom", "toSide": "top" },
+    { "id": "registry-sink", "from": "registry", "to": "sink", "label": "push_frame_sink" },
+    {
+      "id": "vlm-agent-gap",
+      "from": "vlm",
+      "to": "agent",
+      "label": "未接入主入口",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "当前实际运行",
+      "items": [
+        "main.cpp 只创建 LlamaVLM 与两个 Worker；VLM Worker 把非空描述直接 publish_push。",
+        "面板只显示已推送事件；这条路径没有 Skill、Agent Loop 或 ToolRegistry 调用。",
+        "运行结果可作为视觉描述与面板链路的证据，不能作为双模型工具决策的证据。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "未接入的模块",
+      "items": [
+        "main.cpp 没有 load_skill、Agent、ToolRegistry 或 LlamaText 的构造与调用。",
+        "tests/ 直接组合这些模块：agent_loop_test 用 MockModel，decision_model_test 用真实 Qwen 权重（存在时）。",
+        "模块编译通过、测试通过，不等于主入口已经具备该能力。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Qwen 适配器现状",
+      "items": [
+        "ToolDecisionModel 构造时接收 LlamaText 引用，但当前 generate 按视觉事实文本直接生成 push_frame 或 final JSON。",
+        "因此当前代码路径没有调用 LlamaText::generate；Qwen 权重加载只在独立测试中出现。",
+        "Agent Loop 的 3 次生成预算、ToolResult 回填与白名单拒绝逻辑仅由 agent_loop_test 覆盖。"
+      ]
+    }
+  ]
+}
