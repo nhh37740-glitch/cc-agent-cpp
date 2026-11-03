@@ -1,0 +1,4 @@
+# 架构图 HTML 与图源 JSON 的字节必须与 delivery 凭据中的 SHA-256 一致。
+# 禁止 Git 在检出时做 CRLF 转换，否则独立 HTML 的校验会失效。
+docs/架构图/*.html text eol=lf
+docs/架构图/*.json text eol=lf
