@@ -48,15 +48,18 @@ jobs:
             echo 'docs/架构图 不存在，本提交没有架构图，跳过'
             exit 0
           fi
-          sources=(docs/架构图/*.json)
+          sources=()
+          for candidate in docs/架构图/*.json; do
+            case "$candidate" in
+              *.delivery.json) continue ;;
+            esac
+            sources+=("$candidate")
+          done
           if [ ${#sources[@]} -eq 0 ]; then
-            echo 'docs/架构图 下没有图源 JSON'
+            echo 'docs/架构图 下没有可验证的图源 JSON'
             exit 1
           fi
           for source_path in "${sources[@]}"; do
-            case "$source_path" in
-              *.delivery.json) continue ;;
-            esac
             diagram_type=$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["diagram_type"])' "$source_path")
             revision=$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["meta"]["repository"]["revision"])' "$source_path")
             git cat-file -e "$revision^{commit}"
